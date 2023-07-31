@@ -1,9 +1,9 @@
-@businessUnitId = 4_3d1ENwGnb3asfrtNekTJWg
+@businessUnitId = 4_3d1ENwGnb
 
 ###
 
 # @name groups
-GET https://cdp.eu5.gigya.com/api/businessunits/{{businessUnitId}}/schemas/HEf3OzVo__Sa7i4Ef8cszg/groups
+GET https://cdp.eu5.gigya.com/api/businessunits/{{businessUnitId}}/schemas/HEf3OzV/groups
     ?userKey={{cdc-user-key}}
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
