@@ -1,3 +1,17 @@
+/*
+  How to use this converter:
+    - step 1: Create free account at teleporthq.io
+    - step 2: Delete all TeleportHQ projects if they were previously created
+    - step 3: In Figma select components you want to export and use TeleportHQ plugin to export them
+    - step 4: In created TeleportHQ project export source code as React app, it will created ZIP file with React ready source files
+    - step 5: Unzip exported ZIP file into src folder of your project, overriding any source code which was exported before
+    - step 6: In your React component render() method call function from exported component source and return the result. This will render your React component exactly to match Figma design for selected component
+    - step 7: In your React component render() method wrap call to exported component function into provided here transformExportedDesign() method, passing element map as a first parameter and 
+    		result from exported function as a second parameter. Use provided below default elementMap constant as an example. Each exported control can be mapped to your specific JSX element,
+      		'remove' string, which will remove mapped control keeping its children, and 'removeAll' string, which will remove mapped control toghether with its children. This will allow tayloring
+		exported markup to the specific functionality and component library of your React component. This is implemented to use Material UI library, but could be used for other libraries as well
+    - step 8: In case of updates in Figmea design, just repeat steps 2-5 to propagate updates into your app  
+*/
 import {FormControl, Box, Typography, Button, InputLabel, Select, Skeleton, MenuItem, Tabs, Tab, type TypographyTypeMap, Dialog} from '@mui/material';
 import {PureComponent, type HTMLAttributes, type ImgHTMLAttributes} from 'react';
 import React from 'react';
