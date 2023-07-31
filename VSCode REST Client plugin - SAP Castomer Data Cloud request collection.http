@@ -1,4 +1,4 @@
-@cdc-api-key = 3_hXJvDx1eFcp8VgSUBw77h4hFrfV6er-197aceXyUuuEeybn5FjJA5xxt9SnWntcZ
+@cdc-api-key = 3_hXJvDx1eFcp8VgSUBw77h4hFrfV6er
 @cdc-dc = {{cdc-dc-us}}
 
 # @name groups_search
@@ -47,7 +47,7 @@ POST https://accounts.{{cdc-dc}}/accounts.groups.setSiteConfig
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-invitationPageUrl=https://cp-gaa-dev-hillsgroup.uk.r.appspot.com/invite
+invitationPageUrl=https://test.com/invite
 
 ###
 
@@ -90,14 +90,8 @@ policy={
         "rootFactor": {
           "type": "IP",
           "ranges": [
-            "204.141.110.0/24",
-            "204.141.104.0/25",
-            "204.141.132.0/24",
-            "204.141.136.0/24",
-            "24.54.179.2/255.255.255.0",
-            "98.188.92.128/25",
-            "4.26.160.208/29",
-            "4.4.183.0/26"
+            "192.168.0.1/24",
+            "192.168.1.1/25"
           ],
           "inclusive": true
         },
@@ -127,17 +121,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "208.78.8.0/22",
-                "209.87.128.0/20",
-                "204.141.128.0/24",
-                "204.141.158.0/24"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_cq8gb4Hf8GGuakl_33NvzxluA5PV87eb2r44uIh4eJASElvLJtEg1Cw6kX7SXEvR"
+                "3_cq8gb4Hf8GGuakl"
               ],
               "inclusive": true
             }
@@ -200,8 +192,8 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr7sGTcq82OUOdHGwOdN632FWV45HfesWxX-2-YhUrPVJySD7",
-                "3_QElaX5W_8GVqhaxPTDuTwjgXaztBcH9YBpy_tBpEdU-8lbKv_YukDxM4DagpEiSd"
+                "3_vKnJn-q2bLxCkMABr",
+                "3_QElaX5W_8GVqhaxPT"
               ],
               "inclusive": false
             }
@@ -234,16 +226,16 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "204.141.128.0/24",
-                "204.141.158.0/24"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr7sGTcq82OUOdHGwOdN632FWV45HfesWxX-2-YhUrPVJySD7",
-                "3_QElaX5W_8GVqhaxPTDuTwjgXaztBcH9YBpy_tBpEdU-8lbKv_YukDxM4DagpEiSd"
+                "3_vKnJn-q2bLxCkMABr7s",
+                "3_QElaX5W_8GVqhaxPTDu"
               ],
               "inclusive": false
             }
@@ -276,31 +268,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "44.226.221.216",
-                "44.232.174.38",
-                "44.233.77.61",
-                "44.226.39.175",
-                "54.203.48.147",
-                "54.189.188.180",
-                "54.212.32.144",
-                "54.70.225.171",
-                "44.225.255.212",
-                "52.42.250.150",
-                "44.239.144.206",
-                "44.239.69.136",
-                "54.190.135.163",
-                "44.233.158.199",
-                "52.12.252.17",
-                "52.42.250.150",
-                "44.239.144.206",
-                "44.239.69.136"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr7sGTcq82OUOdHGwOdN632FWV45HfesWxX-2-YhUrPVJySD7"
+                "3_vKnJn-q2bLxCkMABr7sGTc"
               ],
               "inclusive": true
             }
@@ -334,31 +310,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "44.226.221.216",
-                "44.232.174.38",
-                "44.233.77.61",
-                "44.226.39.175",
-                "54.203.48.147",
-                "54.189.188.180",
-                "54.212.32.144",
-                "54.70.225.171",
-                "44.225.255.212",
-                "52.42.250.150",
-                "44.239.144.206",
-                "44.239.69.136",
-                "54.190.135.163",
-                "44.233.158.199",
-                "52.12.252.17",
-                "52.42.250.150",
-                "44.239.144.206",
-                "44.239.69.136"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr7sGTcq82OUOdHGwOdN632FWV45HfesWxX-2-YhUrPVJySD7"
+                "3_vKnJn-q2bLxCkMABr"
               ],
               "inclusive": true
             }
@@ -392,50 +352,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "40.69.216.38",
-                "40.69.216.42",
-                "40.69.217.31",
-                "40.69.216.66",
-                "13.95.149.245",
-                "13.95.144.211",
-                "13.95.148.210",
-                "13.95.144.114",
-                "13.81.104.39",
-                "13.81.106.179",
-                "13.81.111.104",
-                "13.81.111.169",
-                "52.169.191.202",
-                "52.169.191.210",
-                "52.169.191.148",
-                "52.169.191.108",
-                "188.65.0.0/21",
-                "90.187.6.233/32",
-                "185.120.60.0/22",
-                "87.128.18.58",
-                "212.185.161.120/29",
-                "216.218.131.46",
-                "52.138.218.121",
-                "52.169.253.71",
-                "52.169.254.242",
-                "52.178.128.159",
-                "52.178.128.215",
-                "52.178.130.248",
-                "52.178.132.217",
-                "52.178.139.88",
-                "52.166.67.186",
-                "52.174.41.85",
-                "52.174.47.52",
-                "52.178.42.82",
-                "52.178.45.235",
-                "52.232.26.228",
-                "52.233.182.204"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp"
+                "3_EH6cZ6gBJgl94hXqc"
               ],
               "inclusive": true
             }
@@ -469,15 +394,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "208.78.8.0/22",
-                "209.87.128.0/20"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_cq8gb4Hf8GGuakl_33NvzxluA5PV87eb2r44uIh4eJASElvLJtEg1Cw6kX7SXEvR"
+                "3_cq8gb4Hf8GGuakl_33Nv"
               ],
               "inclusive": true
             }
@@ -510,16 +435,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "18.204.87.103",
-                "35.175.97.159",
-                "54.87.236.160"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_QElaX5W_8GVqhaxPTDuTwjgXaztBcH9YBpy_tBpEdU-8lbKv_YukDxM4DagpEiSd"
+                "3_QElaX5W_8GVqhaxPTDuTwj"
               ],
               "inclusive": true
             }
@@ -553,16 +477,15 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "18.204.87.103",
-                "35.175.97.159",
-                "54.87.236.160"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_QElaX5W_8GVqhaxPTDuTwjgXaztBcH9YBpy_tBpEdU-8lbKv_YukDxM4DagpEiSd"
+                "3_QElaX5W_8GVqhaxPTDuTwjgXaz"
               ],
               "inclusive": true
             }
@@ -594,7 +517,7 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp"
+                "3_EH6cZ6gBJgl94hXqcCe"
               ],
               "inclusive": true
             }
@@ -619,45 +542,8 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "204.141.158.0/24",
-                "204.141.128.0/24",
-                "52.233.182.204",
-                "52.232.26.228",
-                "52.178.45.235",
-                "52.178.42.82",
-                "52.174.47.52",
-                "52.174.41.85",
-                "52.166.67.186",
-                "52.178.139.88",
-                "52.178.132.217",
-                "52.178.130.248",
-                "52.178.128.215",
-                "52.178.128.159",
-                "52.169.254.242",
-                "52.169.253.71",
-                "52.138.218.121",
-                "216.218.131.46",
-                "212.185.161.120/29",
-                "87.128.18.58",
-                "185.120.60.0/22",
-                "90.187.6.233/32",
-                "188.65.0.0/21",
-                "52.169.191.108",
-                "52.169.191.148",
-                "52.169.191.210",
-                "52.169.191.202",
-                "13.81.111.169",
-                "13.81.111.104",
-                "13.81.106.179",
-                "13.81.104.39",
-                "13.95.144.114",
-                "13.95.148.210",
-                "13.95.144.211",
-                "13.95.149.245",
-                "40.69.216.66",
-                "40.69.217.31",
-                "40.69.216.42",
-                "40.69.216.38"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
@@ -672,7 +558,7 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp"
+                "3_EH6cZ6gBJgl94hXqcCex"
               ],
               "inclusive": true
             }
@@ -697,49 +583,8 @@ policy={
             {
               "type": "IP",
               "ranges": [
-                "45.199.141.0/24",
-                "40.69.216.38",
-                "40.69.216.42",
-                "40.69.217.31",
-                "40.69.216.66",
-                "13.95.149.245",
-                "13.95.144.211",
-                "13.95.148.210",
-                "13.95.144.114",
-                "13.81.104.39",
-                "13.81.106.179",
-                "13.81.111.104",
-                "13.81.111.169",
-                "52.169.191.202",
-                "52.169.191.210",
-                "52.169.191.148",
-                "52.169.191.108",
-                "188.65.0.0/21",
-                "90.187.6.233/32",
-                "185.120.60.0/22",
-                "87.128.18.58",
-                "212.185.161.120/29",
-                "216.218.131.46",
-                "52.138.218.121",
-                "52.169.253.71",
-                "52.169.254.242",
-                "52.178.128.159",
-                "52.178.128.215",
-                "52.178.130.248",
-                "52.178.132.217",
-                "52.178.139.88",
-                "52.166.67.186",
-                "52.174.41.85",
-                "52.174.47.52",
-                "52.178.42.82",
-                "52.178.45.235",
-                "52.232.26.228",
-                "52.233.182.204",
-                "208.78.8.0/22",
-                "209.87.128.0/20",
-                "204.141.128.0/24",
-                "204.141.158.0/24",
-                "37.49.227.23"
+	        "192.168.0.1/24",
+	        "192.168.1.1/25"
               ],
               "inclusive": false
             },
@@ -780,7 +625,7 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp"
+                "3_EH6cZ6gBJgl94hXqcCex1M7"
               ],
               "inclusive": true
             }
@@ -805,8 +650,8 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5Nif4axD-QXug1OgBmAgVieKA56umYvWPnoursaC"
+                "3_EH6cZ6gBJgl94hXqcCex1M7",
+                "3_JuHa5qkVIfY_KsNk1TuudSQ"
               ],
               "inclusive": true
             },
@@ -840,8 +685,8 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5Nif4axD-QXug1OgBmAgVieKA56umYvWPnoursaC"
+                "3_EH6cZ6gBJgl94hXqcCex1M71QN",
+                "3_JuHa5qkVIfY_KsNk1TuudSQT5N"
               ],
               "inclusive": true
             },
@@ -875,8 +720,8 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5Nif4axD-QXug1OgBmAgVieKA56umYvWPnoursaC"
+                "3_EH6cZ6gBJgl94hXqcCex1M71QN",
+                "3_JuHa5qkVIfY_KsNk1TuudSQT5N"
               ],
               "inclusive": true
             },
@@ -910,8 +755,8 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5Nif4axD-QXug1OgBmAgVieKA56umYvWPnoursaC"
+                "3_EH6cZ6gBJgl94hXqcCex1M71QN",
+                "3_JuHa5qkVIfY_KsNk1TuudSQT5N"
               ],
               "inclusive": true
             },
@@ -945,8 +790,8 @@ policy={
             {
               "type": "apiKey",
               "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN8eHd9G-3a5wKNqPihlX1-WTim-URKv0vym4xKp",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5Nif4axD-QXug1OgBmAgVieKA56umYvWPnoursaC"
+                "3_EH6cZ6gBJgl94hXqcCex1M71Q",
+                "3_JuHa5qkVIfY_KsNk1TuudSQT5"
               ],
               "inclusive": true
             },
@@ -1038,7 +883,7 @@ POST https://accounts.{{cdc-dc}}/accounts.search
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-query=SELECT * FROM accounts WHERE UID='c80ae99bac084bb384f1494fb4dfc8bc'
+query=SELECT * FROM accounts WHERE UID='c80ae99bac0'
 
 ###
 
@@ -1049,7 +894,7 @@ POST https://accounts.{{cdc-dc}}/accounts.tfa.getProviders
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-UID=49a97a6b2b0845118d02dbbd3db6c711
+UID=49a97a6b2b08
 
 ###
 
@@ -1232,7 +1077,7 @@ POST https://admin.{{cdc-dc}}/admin.getGroups
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-groupID=API Integration - Corra | Corsair - Dev
+groupID=API Integration - Dev
 &partnerID=80122467
 
 ###
@@ -1244,8 +1089,8 @@ POST https://admin.{{cdc-dc}}/admin.updateGroup
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-groupID=API Integration - iCUE Desktop - Dev
-&aclID=API Integration - iCUE Desktop - Dev
+groupID=API Integration - Dev
+&aclID=API Integration - Dev
 &partnerID=80122467
 
 ###
@@ -1257,7 +1102,7 @@ POST https://admin.{{cdc-dc}}/admin.getEffectiveACL
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-groupIds=API Integration - iCUE Desktop - Dev
+groupIds=API Integration - Dev
 &partnerID=80122467
 
 ###
@@ -1269,7 +1114,7 @@ POST https://admin.{{cdc-dc}}/admin.getACL
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-partnerID=80122467
+partnerID=8012XXXX
 &aclID={{admin_getGroups.response.body.groups.*.aclID}}
 
 ###
@@ -1282,7 +1127,7 @@ POST https://admin.{{cdc-dc}}/admin.setACL
 Content-Type: application/x-www-form-urlencoded
 
 partnerID=80122467
-&aclID=API Integration - iCUE Desktop - Dev
+&aclID=API Integration - Dev
 &acl={}
 
 ###
@@ -1318,7 +1163,7 @@ POST https://accounts.{{cdc-dc}}/accounts.importFullAccount
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-UID=c2efdd60f79b4a578ae9cbef966f6384
+UID=c2efdd60f79b4a
 &importPolicy=upsert
 &isRegistered=false
 &isVerified=false
@@ -1356,8 +1201,8 @@ passwordReset={
 # @name OTP_sendCode
 POST https://accounts.{{cdc-dc}}/accounts.otp.sendCode
     ?apiKey={{cdc-api-key}}
-    &userKey=ANon%2BNX45oAD
-    &secret=qTUA/GoMh7ciYK3iLFzXVa3NP0JWHZY9
+    &userKey={{cdc-app-key}}
+    &secret={{cdc-app-secret}}
 Content-Type: application/x-www-form-urlencoded
 
 email=abc.test@mailinator.com
@@ -1369,26 +1214,26 @@ email=abc.test@mailinator.com
 # @name OTP_update
 POST https://accounts.{{cdc-dc}}/accounts.otp.update
     ?apiKey={{cdc-api-key}}
-    &userKey=ANon%2BNX45oAD
-    &secret=qTUA/GoMh7ciYK3iLFzXVa3NP0JWHZY9
+    &userKey={{cdc-app-key}}
+    &secret={{cdc-app-secret}}
 Content-Type: application/x-www-form-urlencoded
 
 vToken={{OTP_sendCode.response.body.vToken}}
 &code={{OTP_sendCode.response.body.code}}
-&UID=fb06209c01524cdf9adf087a52d60d6b
+&UID=fb06209c01524c
 
 ###
 
-POST https://api.us1.b2b-gigya.com/runtime/4_kvKC1tmA3Dq4Jy2qZB6uew/authorization/token/PQEPZ9AWHXPLK1YC3ORK
+POST https://api.us1.b2b-gigya.com/runtime/4_kvKC1tmA3Dq4Jy2qZB6uew/authorization/token/PQEPZ9AWHX
 Content-Type: application/json
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhb01aSUFkcWx5U0JLb0cwS1NNemlXWGNGaGZhMkM1QyIsImV4cCI6IjE2NTEzNTQzMTYwMDAifQ.WE8-HSuockjZ-QRS7iao4e3S8l4IOH2d6fPTYvOKBBo
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhb01aSUFkcWx5U0JLb0cwS
 
 {
   "identity": {
-    "id": "ed1c8a55665f4908b2bbd561d52eafd1"
+    "id": "ed1c8a55665f"
   },
   "context": {
-    "organization": "035abb41-792c-43ad-9f84-f497720ed0a9"
+    "organization": "035abb41-792c"
   },
   "response": {
     "include_identity": false,
@@ -1418,8 +1263,8 @@ Content-Type: application/x-www-form-urlencoded
 config={
       "name": "poccommerce",
       "entityID": "urn:ssoextension:stag:hybris:de",
-      "assertionConsumerServiceURL": "https://accstorefront.cw91acdn77-fhoffmann1-s1-public.model-t.cc.commerce.ondemand.com:443/samlsinglesignon/saml/SSO",
-      "singleLogoutServiceURL": "https://accstorefront.cw91acdn77-fhoffmann1-s1-public.model-t.cc.commerce.ondemand.com:443/samlsinglesignon/saml/SingleLogout",
+      "assertionConsumerServiceURL": "https://accstorefront.xyz-s1-public.model-t.cc.commerce.ondemand.com:443/samlsinglesignon/saml/SSO",
+      "singleLogoutServiceURL": "https://accstorefront.xyz-s1-public.model-t.cc.commerce.ondemand.com:443/samlsinglesignon/saml/SingleLogout",
       "singleLogoutServiceBinding": "urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect",
       "authnRequestSigned": false,
       "wantAssertionSigned": false,
@@ -1451,7 +1296,7 @@ config={
           "attributeType": "urn:oasis:names:tc:SAML:2.0:attrname-format:unspecified"
         }
       ],
-      "b2bAppId": "P86IEQ7TLXKCPY9BOO6Q",
+      "b2bAppId": "P86IEQ7TL",
       "idpSigningAlgorithm": "SHA256"
 }
 
@@ -1475,7 +1320,7 @@ POST https://accounts.{{cdc-dc}}/accounts.setAccountInfo
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-UID=7d952b05dc644aeb9b8e55cd1c828995
+UID=7d952b05dc644aeb9
 &profile={
     "phones": [{"type": "mobile", "number": "(555) 123-4567"}]
 }
@@ -1489,9 +1334,9 @@ POST https://accounts.{{cdc-dc}}/accounts.b2b.auth.getAssets
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-UID=ed1c8a55665f4908b2bbd561d52eafd1
-&bpid=1995dfa71e5e44a1bab21a4d0210d889
-&appId=PQEPZ9AWHXPLK1YC3ORK
+UID=ed1c8a55665f4
+&bpid=1995dfa71e5e4
+&appId=PQEPZ9AWHX
 
 ###
 
@@ -1519,7 +1364,7 @@ POST https://accounts.{{cdc-dc}}/accounts.login
 Content-Type: application/x-www-form-urlencoded
 
 loginID=dmitry.shapovalov@sap.com
-&password=aA!123456
+&password=xyz
 &include=id_token,profile
 
 ###
@@ -1527,8 +1372,8 @@ loginID=dmitry.shapovalov@sap.com
 # @name register
 POST https://accounts.{{cdc-dc}}/accounts.register
     ?apiKey={{cdc-api-key}}
-    &userKey=ANon%2BNX45oAD
-    &secret=qTUA/GoMh7ciYK3iLFzXVa3NP0JWHZY9
+    &userKey={{cdc-app-key}}
+    &secret={{cdc-app-secret}}
 Content-Type: application/x-www-form-urlencoded
 
 email=abc.test@mailinator.com
@@ -1565,7 +1410,7 @@ POST https://accounts.{{cdc-dc}}/accounts.tfa.initTFA
 Content-Type: application/x-www-form-urlencoded
 
 # regToken={{login.response.body.regToken}}
-UID=49a97a6b2b0845118d02dbbd3db6c711
+UID=49a97a6b2b08451
 &provider=gigyaEmail
 &mode=edit
 &clientContext={{clientContext}}
@@ -1646,7 +1491,7 @@ POST https://accounts.{{cdc-dc}}/accounts.notifyLogin
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-siteUID=7a95c29726a94e89bf9f68fd4aeb77e7
+siteUID=7a95c29726a94e
 &sessionExpiration=8640000
 
 ###
@@ -1670,7 +1515,7 @@ POST https://accounts.{{cdc-dc}}/accounts.setAccountInfo
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-UID=80c36ea3a66c4d319f9c97326b526a26
+UID=80c36ea3a66c4d
 &profile={firstName: 'Dmitry'}
 
 ###
@@ -1682,7 +1527,7 @@ POST https://accounts.{{cdc-dc}}/accounts.resetPassword
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-loginID=witold.m.rudnicki@gsk.com
+loginID=test@test.com
 
 ###
 
