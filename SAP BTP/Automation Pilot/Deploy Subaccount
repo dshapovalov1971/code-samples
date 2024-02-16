@@ -1,0 +1,188 @@
+{
+  "id": "pipelines-<<<TENANT_ID>>>",
+  "technicalName": "pipelines",
+  "name": "Pipelines",
+  "description": "",
+  "owner": "<<<TENANT_ID>>>",
+  "inputs": [
+    {
+      "id": "pipelines-<<<TENANT_ID>>>:Service.Keys:1",
+      "name": "Service.Keys",
+      "description": null,
+      "catalog": "pipelines-<<<TENANT_ID>>>",
+      "owner": null,
+      "version": 1,
+      "keys": {
+        "cis-central": {
+          "type": "object",
+          "sensitive": true,
+          "description": null
+        }
+      },
+      "values": {
+        "cis-central": ""
+      },
+      "tags": {}
+    }
+  ],
+  "commands": [
+    {
+      "configuration": {
+        "values": [
+          {
+            "alias": "cis-central-service-key",
+            "valueFrom": {
+              "inputReference": "pipelines-<<<TENANT_ID>>>:Service.Keys:1",
+              "inputKey": "cis-central"
+            }
+          }
+        ],
+        "output": {},
+        "executors": [
+          {
+            "execute": "cis-sapcp:ListSubAccounts:1",
+            "input": {
+              "serviceKey": "$(.cis-central-service-key)"
+            },
+            "alias": "check-subaccount",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": null,
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          },
+          {
+            "execute": "cis-sapcp:CreateSubAccount:1",
+            "input": {
+              "displayName": "$(.execution.input.name)",
+              "subdomain": "$(.execution.input.name)",
+              "serviceKey": "$(.cis-central-service-key)",
+              "region": "cf-ap12",
+              "admins": "$([.execution.metadata.originatorId])"
+            },
+            "alias": "create-subaccount",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": {
+              "semantic": "OR",
+              "conditions": [
+                {
+                  "semantic": "OR",
+                  "cases": [
+                    {
+                      "expression": "$(.check-subaccount.output.subAccounts | filter(.displayName == $.execution.input.name) | length)",
+                      "operator": "EQUALS",
+                      "semantic": "OR",
+                      "values": [
+                        "0"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          },
+          {
+            "execute": "utils-sapcp:Void:1",
+            "input": {
+              "message": "$(if .create-subaccount.executed then .create-subaccount.output.subAccountId else .check-subaccount.output.subAccounts[] | select(.displayName == $.execution.input.name).guid end)"
+            },
+            "alias": "subaccount",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": null,
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          },
+          {
+            "execute": "utils-sapcp:ForEach:1",
+            "input": {
+              "command": "utils-sapcp:Void:1"
+            },
+            "alias": "create-services",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": null,
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          }
+        ],
+        "listeners": []
+      },
+      "id": "pipelines-<<<TENANT_ID>>>:Create.Environment:1",
+      "name": "Create.Environment",
+      "description": null,
+      "catalog": "pipelines-<<<TENANT_ID>>>",
+      "version": 1,
+      "inputKeys": {
+        "name": {
+          "type": "string",
+          "sensitive": false,
+          "required": true,
+          "minSize": null,
+          "maxSize": null,
+          "minValue": null,
+          "maxValue": null,
+          "allowedValues": null,
+          "allowedValuesFromInputKeys": null,
+          "suggestedValues": null,
+          "suggestedValuesFromInputKeys": null,
+          "defaultValue": null,
+          "defaultValueFromInput": null,
+          "description": null
+        }
+      },
+      "outputKeys": {},
+      "tags": {
+        "feature:logs": "",
+        "feature:priority": "medium"
+      }
+    },
+    {
+      "configuration": {
+        "values": [],
+        "output": {},
+        "executors": [
+          {
+            "execute": "scripts-sapcp:ExecuteScript:1",
+            "input": {
+              "script": "YnRwIGxpc3Qgc2VydmljZXMvaW5zdGFuY2UgLS1zdWJhY2NvdW50IHFh"
+            },
+            "alias": "check-service",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": null,
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          }
+        ],
+        "listeners": []
+      },
+      "id": "pipelines-<<<TENANT_ID>>>:Create.Service:1",
+      "name": "Create.Service",
+      "description": null,
+      "catalog": "pipelines-<<<TENANT_ID>>>",
+      "version": 1,
+      "inputKeys": {},
+      "outputKeys": {},
+      "tags": {}
+    }
+  ]
+}
