@@ -1,0 +1,5 @@
+{"e":"dev","n":"app-url","r":"dev.app.rootdomain.com"}
+{"e":"qa","n":"app-url","r":"qa.app.rootdomain.com"}
+{"e":"dev","n":"env-subject","r":"[DEV]"}
+{"e":"qa","n":"env-subject","r":"[QA]"}
+{"e":"prd","n":"env-subject","r":"[PRD]"}
