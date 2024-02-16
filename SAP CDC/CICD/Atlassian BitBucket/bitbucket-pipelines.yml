@@ -1,4 +1,4 @@
-image: atlassian/default-image:3
+image: ubuntu:latest
 
 pipelines:
   branches:
@@ -7,190 +7,507 @@ pipelines:
         name: Deploy CDC Resources
         script:
         # Read API Keys
+        - apt-get update
+        - apt-get -y install curl jq
+        - replace_values () { jq -nrc --slurpfile r cdc/replacements '$r | map(select(.e=="'$BITBUCKET_BRANCH'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")'; }
         - parentSite=$(cat cdc/parentSite)
         - |
-          sites=$(curl -s \
+          sites=$(curl -s --fail-with-body \
               --data-urlencode userKey=$cdcAppKey \
               --data-urlencode secret=$cdcAppSecret \
               -d targetPartnerID=$cdcPartnerId \
               -d httpStatusCodes=true \
               https://admin.$cdcDC/admin.getPartnerSites | \
-            jq '. as $p | .sites[] | select(.name == "'$(echo ${parentSite/<env>/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k))')
-        - echo $sites | jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . | sort_by(.groupApiKey) | map({name, apiKey}) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "<env>")' >apikeys.json
+            jq '. as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k))')
+        - echo $sites | jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . | sort_by(.groupApiKey) | map({name, apiKey}) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "{{env}}")' >apikeys.json
         # Write Site Configurations
         - |
           jq -rc '.[] | .name, .apiKey' apikeys.json |
-            while IFS=$ read -r name; read -r apikey; do
-              curl -s \
+            while IFS=$ read -r site; read -r apikey; do
+              curl -s --fail-with-body \
                   -d apiKey=$apikey \
                   --data-urlencode userKey=$cdcAppKey \
                   --data-urlencode secret=$cdcAppSecret \
-                  $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$name'") | .validDomains.login | map(. | select(.|test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d '\''trustedSiteURLs="+.+"'\''") else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end') \
-                  $(jq -rc '.[] | select(.name == "'$name'") | .cnames.apiDomainPrefix | if . then "-d gigyaSettings={\"enableSSLForCNAME\": true, \"customAPIDomainPrefix\": \""+.+"\"}" else "" end' cdc/sites.json | tr -d " ") \
-                  $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$name'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end') \
+                  $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .validDomains.login | map(. | select(.|test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d '\''trustedSiteURLs="+.+"'\''") else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end') \
+                  "$(jq -rc '.[] | select(.name == "'$site'") | .cnames.apiDomainPrefix | if . then "-d gigyaSettings={\"enableSSLForCNAME\": true, \"customAPIDomainPrefix\": \""+.+"\"}" else "" end' cdc/sites.json | sed -e 's/ //')" \
+                  $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end') \
+                  "$(jq -rc '.[] | select(.name == "'$site'") | .globalConf | if . then . else "" end  | if . then "-d globalConf="+. else "" end' cdc/sites.json | sed -e "$(replace_values)" | perl -0777pe 's/ //')" \
                   -d httpStatusCodes=true \
                   https://admin.$cdcDC/admin.setSiteConfig         
             done        
-                  # https://webhook.site/43f205bb-8506-4d8f-9907-e829dab61938
+        # Write Schemas
+        - parent=true
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              curl -s --fail-with-body \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  "$(jq -nrc --arg p $parent 'if $p=="false" then "-d scope=site" else "" end' | sed -e 's/ //')" \
+                  $(find "cdc/$site/schema" -type f | while read -r file; do bn=$(basename -s .json $file); echo "--data-urlencode $bn=$(jq -rc --arg file $bn --arg p $parent '. | if $file!="dataSchema" then del(.dynamicSchema) else . end | .fields |= with_entries(if $file=="profileSchema" then (select(.key | startswith("oidcData.") or startswith("samlData.") | not) | .value |= if $p=="true" then {writeAccess, required} else {required} end) else (if $file=="dataSchema" then (.value |= if $p=="true" then . else {required} end) else . end) end)' $file)"; done) \
+                  -d httpStatusCodes=true \
+                  https://accounts.$cdcDC/accounts.setSchema 
+              parent=false
+            done        
+        # Write Consent Statements
+        - parent=true
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              if [ -d cdc/$site ]; then
+                [ "$parent" == "false" ] && jq 'with_entries(.value |= {isActive})' cdc/$site/consent.statements.json > cdc/$site/consent.statements.json.tmp && mv cdc/$site/consent.statements.json.tmp cdc/$site/consent.statements.json
+                curl -s --fail-with-body \
+                    -d apiKey=$apikey \
+                    --data-urlencode userKey=$cdcAppKey \
+                    --data-urlencode secret=$cdcAppSecret \
+                    --data-urlencode preferences@cdc/$site/consent.statements.json \
+                    -d httpStatusCodes=true \
+                    https://accounts.$cdcDC/accounts.setConsentsStatements
+              fi
+              parent=false
+            done        
+        # Write Policies
+        - parent=true
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              if [ -d cdc/$site ]; then
+                rm -f cdc/$site/policies/rba.json
+                [ "$parent" == "false"  ] && rm -f cdc/$site/policies/authentication.json
+                [ "$parent" == "false"  ] && rm -f cdc/$site/policies/passwordComplexity.json
+                [ "$parent" == "false"  ] && rm -f cdc/$site/policies/profilePhoto.json
+                [ "$parent" == "false"  ] && rm -f cdc/$site/policies/federation.json
+                [ "$parent" == "false" -a -f cdc/$site/policies/registration.json ] && jq 'del(.requireSecurityQuestion, .requireLoginID, .enforceCoppa)' cdc/$site/policies/registration.json > cdc/$site/policies/registration.json.tmp && mv cdc/$site/policies/registration.json.tmp cdc/$site/policies/registration.json
+                [ "$parent" == "false" -a -f cdc/$site/policies/accountOptions.json ] && jq 'del(.allowUnverifiedLogin, .preventLoginIDHarvesting, .defaultLanguage, .loginIdentifiers, .loginIdentifierConflict)' cdc/$site/policies/accountOptions.json > cdc/$site/policies/accountOptions.json.tmp && mv cdc/$site/policies/accountOptions.json.tmp cdc/$site/policies/accountOptions.json
+                [ "$parent" == "true" -a -f cdc/$site/policies/security.json ] && jq 'del(.accountLockout, .captcha, .ipLockout)' cdc/$site/policies/security.json > cdc/$site/policies/security.json.tmp && mv cdc/$site/policies/security.json.tmp cdc/$site/policies/security.json
+                [ "$parent" == "false" -a -f cdc/$site/policies/security.json ] && jq 'del(.accountLockout, .captcha, .ipLockout, .passwordChangeInterval, .passwordHistorySize)' cdc/$site/policies/security.json > cdc/$site/policies/security.json.tmp && mv cdc/$site/policies/security.json.tmp cdc/$site/policies/security.json
+                [ "$parent" == "false" -a -f cdc/$site/policies/twoFactorAuth.json ] && jq 'del(.providers)' cdc/$site/policies/twoFactorAuth.json > cdc/$site/policies/twoFactorAuth.json.tmp && mv cdc/$site/policies/twoFactorAuth.json.tmp cdc/$site/policies/twoFactorAuth.json
+                curl -s --fail-with-body \
+                    -d apiKey=$apikey \
+                    --data-urlencode userKey=$cdcAppKey \
+                    --data-urlencode secret=$cdcAppSecret \
+                    $(find "cdc/$site/policies" -type f | while read -r file; do bn=$(basename -s .json $file); sed -ie "$(replace_values)" $file; echo "--data-urlencode $bn@$file"; done) \
+                    -d httpStatusCodes=true \
+                    https://accounts.$cdcDC/accounts.setPolicies 
+              fi
+              parent=false
+            done        
+        # Write ScreenSets
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              jq -rc '.[] | del(.rawTranslations, .compressionType) ' cdc/$site/screenSets.json |
+                while IFS=$ read -r ss; do
+                  curl -s --fail-with-body \
+                      -d apiKey=$apikey \
+                      --data-urlencode userKey=$cdcAppKey \
+                      --data-urlencode secret=$cdcAppSecret \
+                      $(echo "$ss" | jq -rc '. | to_entries[] | .key, (.value | @base64)' | while IFS=$ read -r key; read -r value; do echo $value | base64 -d > $key; [ $(stat -c %s $key) -gt 0 ] && echo "--data-urlencode $key@$key"; done) \
+                      -d httpStatusCodes=true \
+                      https://accounts.$cdcDC/accounts.setScreenSet 
+                done
+            done        
+        # Write RBA Policy
+        - apikey=$(jq -rc '.[0] | .apiKey' apikeys.json)
+        - |
+          curl -s \
+              -d apiKey=$apikey \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              --data-urlencode policy@cdc/rba.policy.json \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.rba.setPolicy
+        # Write IDX Variables
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              vars="$(curl -s --fail-with-body \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  -d scope=all \
+                  -d httpStatusCodes=true \
+                  https://idx.$cdcDC/idx.getGlobalVariables |
+                jq '.data | map(.name)')"
+              jq -rc '.[] | del(.lastUpdated, .created) ' cdc/$site/dataflows/globalVariables.json |
+                sed -e "$(replace_values)" | while IFS=$ read -r ss; do
+                  if [ "$(echo "$vars" | jq -rc --arg name "$(echo "$ss" | jq -rc '.name')" 'map(select(. == $name)) | if length > 0 then "set" else "create" end')" == "create" ]; then
+                    curl -s --fail-with-body \
+                        -d apiKey=$apikey \
+                        --data-urlencode userKey=$cdcAppKey \
+                        --data-urlencode secret=$cdcAppSecret \
+                        $(echo "$ss" | jq -rc '. | to_entries[] | .key, (.value | @uri)' | while IFS=$ read -r key; read -r value; do echo "-d $key=$value"; done) \
+                        -d httpStatusCodes=true \
+                        https://idx.$cdcDC/idx.createGlobalVariable 
+                  fi            
+                done
+            done        
+        # Write IDX Dataflows
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              dataflows="$(curl -s --fail-with-body \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  -d query='select * from dataflow' \
+                  -d httpStatusCodes=true \
+                  https://idx.$cdcDC/idx.search |
+                jq '.result // [] | map({name, id})')"
+              jq -rc --arg df "$dataflows" '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/dataflows.json |
+                while IFS=$ read -r ss; do
+                  dfname=$(echo "$ss" | jq -rc '.name')
+                  op=$(echo "$dataflows" | jq -rc --arg name "$dfname" 'map(select(.name == $name)) | if length > 0 then "set" else "create" end')
+                  resp=$(curl -s --fail-with-body \
+                      -d apiKey=$apikey \
+                      --data-urlencode userKey=$cdcAppKey \
+                      --data-urlencode secret=$cdcAppSecret \
+                      --data-urlencode data="$(echo "$ss" | jq -rc --arg id $(echo "$dataflows" | jq -rc --arg name "$dfname" 'map(select(.name == $name)) | if length>0 then .[0].id else "noop" end') 'if $id != "noop" then (.id=$id) else del(.id) end')" \
+                      -d httpStatusCodes=false \
+                      https://idx.$cdcDC/idx."$op"Dataflow)
+                  echo "$resp" | jq '.'
+                  [[ "$(echo $resp | jq -rc '.errorCode')" =~ ^(0|403200)$ ]] || exit 22
+                  if [ "$op" == "create" ]; then dataflows=$(echo "$dataflows" | jq --arg name "$dfname" --arg id "$(echo "$resp" | jq -rc '.id')" '.+=[{"id":$id,"name":$name}]'); fi
+                done
+          # Write IDX Scheduling
+              schedules="$(curl -s --fail-with-body \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  -d query='select * from scheduling' \
+                  -d httpStatusCodes=true \
+                  https://idx.$cdcDC/idx.search |              
+                jq '.result // [] | map({name, id, dataflowName})')"
+              jq -rc --arg df "$schedules" '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/scheduling.json |
+                sed -e "$(replace_values)" | while IFS=$ read -r ss; do
+                  curl -s --fail-with-body \
+                      -d apiKey=$apikey \
+                      --data-urlencode userKey=$cdcAppKey \
+                      --data-urlencode secret=$cdcAppSecret \
+                      --data-urlencode data="$(echo "$ss" | jq -rc --arg dataflowId "$(echo "$dataflows" | jq -rc --arg dataflowName "$(echo "$ss" | jq -rc '.dataflowName')" 'map(select(.name == $dataflowName))[0].id')" --arg id $(echo "$schedules" | jq -rc --arg name "$(echo "$ss" | jq -rc '.name')" 'map(select(.name == $name)) | if length>0 then .[0].id else "noop" end') 'if $id != "noop" then (.id=$id) else del(.id) end | .dataflowId=$dataflowId')" \
+                      -d httpStatusCodes=true \
+                      https://idx.$cdcDC/idx.$(echo "$schedules" | jq -rc --argjson df "$(echo "$ss" | jq -rc '{name, dataflowName}')" 'map(select(.name == $df.name and .dataflowName == $df.dataflowName)) | if length > 0 then "set" else "create" end')Scheduling
+                done
+            done                      
+        # Write Communication Channels
+        - apikey=$(jq -rc '.[0] | .apiKey' apikeys.json)
+        - |
+          curl -s --fail-with-body \
+              -d apiKey=$apikey \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              --data-urlencode Channels@cdc/communication.channels.json \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.communication.setChannels
+        # Write Communication Topic Settings
+        - parent=true
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              if [ -d cdc/$site ]; then
+                [ "$parent" == "true" ] && jq 'with_entries(.value |= del(.lastModified, .dependsOn))' cdc/$site/communication/topicSettings.json > cdc/$site/communication/topicSettings.json.tmp && mv cdc/$site/communication/topicSettings.json.tmp cdc/$site/communication/topicSettings.json
+                [ "$parent" == "false" ] && jq 'with_entries(.value |= {isActive})' cdc/$site/communication/topicSettings.json > cdc/$site/communication/topicSettings.json.tmp && mv cdc/$site/communication/topicSettings.json.tmp cdc/$site/communication/topicSettings.json
+                curl -s --fail-with-body \
+                    -d apiKey=$apikey \
+                    --data-urlencode userKey=$cdcAppKey \
+                    --data-urlencode secret=$cdcAppSecret \
+                    --data-urlencode CommunicationSettings@cdc/$site/communication/topicSettings.json \
+                    -d httpStatusCodes=true \
+                    https://accounts.$cdcDC/accounts.communication.setTopicSettings
+              fi
+              parent=false
+            done        
+        # Write SAML IdP Configuration
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              jq -rc '{proxyPageURL, errorPageURL}' cdc/$site/federation/samlIdPConfiguration.json |
+                sed -e "$(replace_values)" | while IFS=$ read -r ss; do
+                  curl -s --fail-with-body \
+                      -d apiKey=$apikey \
+                      --data-urlencode userKey=$cdcAppKey \
+                      --data-urlencode secret=$cdcAppSecret \
+                      -d config=$(echo "$ss" | jq -rc '@uri') \
+                      -d httpStatusCodes=true \
+                      https://fidm.$cdcDC/fidm.saml.idp.setConfig
+                done
+            done        
+        # Write SAML SPs
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              sps="$(curl -s --fail-with-body \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  -d httpStatusCodes=true \
+                  https://fidm.$cdcDC/fidm.saml.idp.getRegisteredSPs |
+                jq '.configs | map(.name)')"
+              jq -rc '.[] | del(.certificateId) | .idpSigningAlgorithm |= "SHA256"' cdc/$site/federation/samlSPs.json |
+                sed -e "$(replace_values)" | while IFS=$ read -r ss; do
+                  if [ "$(echo "$sps" | jq -rc --arg name "$(echo "$ss" | jq -rc '.name')" 'map(select(. == $name)) | if length > 0 then "set" else "create" end')" == "create" ]; then
+                    curl -s --fail-with-body \
+                        -d apiKey=$apikey \
+                        --data-urlencode userKey=$cdcAppKey \
+                        --data-urlencode secret=$cdcAppSecret \
+                        -d config=$(echo "$ss" | jq -rc '@uri') \
+                        -d httpStatusCodes=true \
+                        https://fidm.$cdcDC/fidm.saml.idp.registerSP
+                  fi            
+                done
+            done        
+        # Write SAML IdPs
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              idps="$(curl -s --fail-with-body \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  -d httpStatusCodes=true \
+                  https://fidm.$cdcDC/fidm.saml.getRegisteredIdPs |
+                jq '.configs | map(.name)')"
+              jq -rc '.[] | del(.certificateId) | .spSigningAlgorithm |= "SHA256"' cdc/$site/federation/samlIdPs.json |
+                sed -e "$(replace_values)" | while IFS=$ read -r ss; do
+                  if [ "$(echo "$idps" | jq -rc --arg name "$(echo "$ss" | jq -rc '.name')" 'map(select(. == $name)) | if length > 0 then "set" else "create" end')" == "create" ]; then
+                    curl -s --fail-with-body \
+                        -d apiKey=$apikey \
+                        --data-urlencode userKey=$cdcAppKey \
+                        --data-urlencode secret=$cdcAppSecret \
+                        -d config=$(echo "$ss" | jq -rc '@uri') \
+                        -d httpStatusCodes=true \
+                        https://fidm.$cdcDC/fidm.saml.registerIdP
+                  fi            
+                done
+            done        
 
   custom:
     refresh-cdc-configuration:
     - step:
         name: Read CDC Configuration
         script:
+        - apt-get update
+        - apt-get -y install curl jq git
+        - parentSite=$(cat cdc/parentSite)
+        - replace_values () { jq -nrc --slurpfile r cdc/replacements '$r | map(select(.e=="'$BITBUCKET_BRANCH'") | "s/"+.r+"/{{"+.n+"}}/g") | join(";")'; }
         - mkdir -p cdc
         # Read Sites
         - |
-          curl -s \
+          curl -s --fail-with-body \
               --data-urlencode userKey=$cdcAppKey \
               --data-urlencode secret=$cdcAppSecret \
               -d targetPartnerID=$cdcPartnerId \
               -d httpStatusCodes=true \
-              https://admin.$cdcDC/admin.getPartnerSites | \
-            jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . as $p | .sites[] | select(.name == "'$(echo ${parentSite/<env>/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k)) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "<env>")' \
-            >cdc/sites.json
-        - readarray -d " " -t asite < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(. | .name) | join(" ")' cdc/sites.json)")
-        - readarray -d " " -t aapikey < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(. | .apiKey) | join(" ")' cdc/sites.json)")
+              https://admin.$cdcDC/admin.getPartnerSites |
+            jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k)) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "{{env}}")' |
+            sed -e "$(replace_values)" > cdc/sites.json
+        - readarray -d " " -t asite < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(.name) | join(" ")' cdc/sites.json)")
+        - readarray -d " " -t aapikey < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(.apiKey) | join(" ")' cdc/sites.json)")
         - commonProperties='.callId, .errorCode, .apiVersion, .statusCode, .statusReason, .time'
         # Read Schemas  
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site/schema"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
+                -d include=profileSchema,dataSchema,subscriptionsSchema,internalSchema \
                 -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.getSchema | \
+                https://accounts.$cdcDC/accounts.getSchema |
               jq -rc 'del('"$commonProperties"') | to_entries[] | .key, .value' |
                 while IFS=$ read -r key; read -r value; do
                   echo "$value" | jq '.' > "cdc/$site/schema/$key.json"
                 done
           done
-        # Read Policies
+        # Read Consent Statements  
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
-            mkdir -p "cdc/$site/policies"
-            curl -s \
+            mkdir -p "cdc/$site/schema"
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
                 -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.getPolicies | \
+                https://accounts.$cdcDC/accounts.getConsentsStatements |
+              jq '.preferences' > "cdc/$site/consent.statements.json"
+          done
+        # Read Policies
+        - |
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/policies"
+            curl -s --fail-with-body \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.getPolicies |
               jq -rc 'del('"$commonProperties"') | to_entries[] | .key, .value' |
-                while IFS=$ read -r key; read -r value; do
-                  echo "$value" | jq '.' > "cdc/$site/policies/$key.json"
-                done
+              sed -e "$(replace_values)" | while IFS=$ read -r key; read -r value; do
+                echo "$value" | jq '.' > "cdc/$site/policies/$key.json"
+              done
           done
         # Read ScreenSets
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
                 -d include=metadata,screenSetID,html,css,javascript,translations \
                 -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.getScreenSets | \
+                https://accounts.$cdcDC/accounts.getScreenSets |
               jq '.screenSets' > "cdc/$site/screenSets.json"
           done
         # Read RBA Policy
+        - apikey="${aapikey[0]}"
         - |
-          for site in "${asite[@]}"; do 
-            apikey="${aapikey[$i]}"
-            mkdir -p "cdc/$site"
-            curl -s \
-                -d apiKey=$apikey \
-                --data-urlencode userKey=$cdcAppKey \
-                --data-urlencode secret=$cdcAppSecret \
-                -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.rba.getPolicy | \
-              jq '.policy' > "cdc/$site/rba.policy.json"
-          done
+          curl -s --fail-with-body \
+              -d apiKey=$apikey \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.rba.getPolicy |
+            jq '.policy' > "cdc/rba.policy.json"
         # Read Extensions
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
                 -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.extensions.list | \
+                https://accounts.$cdcDC/accounts.extensions.list |
               jq '.result' > "cdc/$site/extensions.json"
           done
         # Read IDX Variables
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site/dataflows"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
                 -d scope=all \
                 -d httpStatusCodes=true \
-                https://idx.$cdcDC/idx.getGlobalVariables | \
-              jq '.data' > "cdc/$site/dataflows/globalVariables.json"
+                https://idx.$cdcDC/idx.getGlobalVariables |
+              jq '.data' |
+              sed -e "$(replace_values)" > "cdc/$site/dataflows/globalVariables.json"
           done        
         # Read IDX Dataflows
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site/dataflows"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
-                -d query="select * from dataflow" \
+                -d query='select * from dataflow' \
                 -d httpStatusCodes=true \
-                https://idx.$cdcDC/idx.search | \
-              jq '.result // []' > "cdc/$site/dataflows/dataflows.json"
-          done  
+                https://idx.$cdcDC/idx.search |
+              jq '.result // [] | map(del(.lastRuntime))' > "cdc/$site/dataflows/dataflows.json"
+          done
         # Read IDX Scheduling
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site/dataflows"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
-                -d query="select * from scheduling" \
+                -d query='select * from scheduling' \
                 -d httpStatusCodes=true \
-                https://idx.$cdcDC/idx.search | \
-              jq '.result // []' > "cdc/$site/dataflows/scheduling.json"
-          done        
-        # Read Communication Channels
-        - |
-          for site in "${asite[@]}"; do 
-            apikey="${aapikey[$i]}"
-            mkdir -p "cdc/$site/communication"
-            curl -s \
-                -d apiKey=$apikey \
-                --data-urlencode userKey=$cdcAppKey \
-                --data-urlencode secret=$cdcAppSecret \
-                -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.communication.getChannels | \
-              jq '.Channels' > "cdc/$site/communication/channels.json"
+                https://idx.$cdcDC/idx.search |              
+              jq '.result // [] | map(del(.jobId, .nextJobStartTime))' | 
+              sed -e "$(replace_values)" > "cdc/$site/dataflows/scheduling.json"
           done
+        # Read Communication Channels
+        - apikey="${aapikey[0]}"
+        - |
+          curl -s --fail-with-body \
+              -d apiKey=$apikey \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.communication.getChannels |
+            jq '.Channels' > "cdc/communication.channels.json"
         # Read Communication Topic Settings
         - |
-          for site in "${asite[@]}"; do 
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
             apikey="${aapikey[$i]}"
             mkdir -p "cdc/$site/communication"
-            curl -s \
+            curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$cdcAppKey \
                 --data-urlencode secret=$cdcAppSecret \
                 -d httpStatusCodes=true \
-                https://accounts.$cdcDC/accounts.communication.getTopicSettings | \
+                https://accounts.$cdcDC/accounts.communication.getTopicSettings |
               jq '.CommunicationSettings' > "cdc/$site/communication/topicSettings.json"
+          done
+        # Read SAML IdP Configuration
+        - |
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/federation"
+            curl -s --fail-with-body \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://fidm.$cdcDC/fidm.saml.idp.getConfig |
+              jq '.config' |
+              sed -e "$(replace_values)" > "cdc/$site/federation/samlIdPConfiguration.json"
+          done
+        # Read SAML SPs
+        - |
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/federation"
+            curl -s --fail-with-body \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://fidm.$cdcDC/fidm.saml.idp.getRegisteredSPs |
+              jq '.configs' |
+              sed -e "$(replace_values)" > "cdc/$site/federation/samlSPs.json"
+          done
+        # Read SAML IdPs
+        - |
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/federation"
+            curl -s --fail-with-body \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://fidm.$cdcDC/fidm.saml.getRegisteredIdPs |
+              jq '.configs' |
+              sed -e "$(replace_values)" > "cdc/$site/federation/samlIdPs.json"
           done
         # Commit Changes
         - |
