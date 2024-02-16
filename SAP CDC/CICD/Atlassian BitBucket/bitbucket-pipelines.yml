@@ -1,0 +1,203 @@
+image: atlassian/default-image:3
+
+pipelines:
+  branches:
+    sandbox:
+    - step:
+        name: Deploy CDC Resources
+        script:
+        # Read API Keys
+        - parentSite=$(cat cdc/parentSite)
+        - |
+          sites=$(curl -s \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d targetPartnerID=$cdcPartnerId \
+              -d httpStatusCodes=true \
+              https://admin.$cdcDC/admin.getPartnerSites | \
+            jq '. as $p | .sites[] | select(.name == "'$(echo ${parentSite/<env>/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k))')
+        - echo $sites | jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . | sort_by(.groupApiKey) | map({name, apiKey}) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "<env>")' >apikeys.json
+        # Write Site Configurations
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r name; read -r apikey; do
+              curl -s \
+                  -d apiKey=$apikey \
+                  --data-urlencode userKey=$cdcAppKey \
+                  --data-urlencode secret=$cdcAppSecret \
+                  $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$name'") | .validDomains.login | map(. | select(.|test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d '\''trustedSiteURLs="+.+"'\''") else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end') \
+                  $(jq -rc '.[] | select(.name == "'$name'") | .cnames.apiDomainPrefix | if . then "-d gigyaSettings={\"enableSSLForCNAME\": true, \"customAPIDomainPrefix\": \""+.+"\"}" else "" end' cdc/sites.json | tr -d " ") \
+                  $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$name'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end') \
+                  -d httpStatusCodes=true \
+                  https://admin.$cdcDC/admin.setSiteConfig         
+            done        
+                  # https://webhook.site/43f205bb-8506-4d8f-9907-e829dab61938
+
+  custom:
+    refresh-cdc-configuration:
+    - step:
+        name: Read CDC Configuration
+        script:
+        - mkdir -p cdc
+        # Read Sites
+        - |
+          curl -s \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d targetPartnerID=$cdcPartnerId \
+              -d httpStatusCodes=true \
+              https://admin.$cdcDC/admin.getPartnerSites | \
+            jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . as $p | .sites[] | select(.name == "'$(echo ${parentSite/<env>/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k)) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "<env>")' \
+            >cdc/sites.json
+        - readarray -d " " -t asite < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(. | .name) | join(" ")' cdc/sites.json)")
+        - readarray -d " " -t aapikey < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(. | .apiKey) | join(" ")' cdc/sites.json)")
+        - commonProperties='.callId, .errorCode, .apiVersion, .statusCode, .statusReason, .time'
+        # Read Schemas  
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/schema"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.getSchema | \
+              jq -rc 'del('"$commonProperties"') | to_entries[] | .key, .value' |
+                while IFS=$ read -r key; read -r value; do
+                  echo "$value" | jq '.' > "cdc/$site/schema/$key.json"
+                done
+          done
+        # Read Policies
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/policies"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.getPolicies | \
+              jq -rc 'del('"$commonProperties"') | to_entries[] | .key, .value' |
+                while IFS=$ read -r key; read -r value; do
+                  echo "$value" | jq '.' > "cdc/$site/policies/$key.json"
+                done
+          done
+        # Read ScreenSets
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d include=metadata,screenSetID,html,css,javascript,translations \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.getScreenSets | \
+              jq '.screenSets' > "cdc/$site/screenSets.json"
+          done
+        # Read RBA Policy
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.rba.getPolicy | \
+              jq '.policy' > "cdc/$site/rba.policy.json"
+          done
+        # Read Extensions
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.extensions.list | \
+              jq '.result' > "cdc/$site/extensions.json"
+          done
+        # Read IDX Variables
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/dataflows"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d scope=all \
+                -d httpStatusCodes=true \
+                https://idx.$cdcDC/idx.getGlobalVariables | \
+              jq '.data' > "cdc/$site/dataflows/globalVariables.json"
+          done        
+        # Read IDX Dataflows
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/dataflows"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d query="select * from dataflow" \
+                -d httpStatusCodes=true \
+                https://idx.$cdcDC/idx.search | \
+              jq '.result // []' > "cdc/$site/dataflows/dataflows.json"
+          done  
+        # Read IDX Scheduling
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/dataflows"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d query="select * from scheduling" \
+                -d httpStatusCodes=true \
+                https://idx.$cdcDC/idx.search | \
+              jq '.result // []' > "cdc/$site/dataflows/scheduling.json"
+          done        
+        # Read Communication Channels
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/communication"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.communication.getChannels | \
+              jq '.Channels' > "cdc/$site/communication/channels.json"
+          done
+        # Read Communication Topic Settings
+        - |
+          for site in "${asite[@]}"; do 
+            apikey="${aapikey[$i]}"
+            mkdir -p "cdc/$site/communication"
+            curl -s \
+                -d apiKey=$apikey \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.communication.getTopicSettings | \
+              jq '.CommunicationSettings' > "cdc/$site/communication/topicSettings.json"
+          done
+        # Commit Changes
+        - |
+          if [[ `git status --porcelain` ]]; then
+            git config --global user.email 'refresh@build.pipeline'
+            git config --global user.name 'Refresh Pipeline'
+            git add --all
+            git commit -m 'Refresh Pipeline [skip ci]'
+            git push origin HEAD:$BITBUCKET_BRANCH
+          fi
