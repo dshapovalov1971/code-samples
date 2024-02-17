@@ -292,6 +292,34 @@ pipelines:
         - parentSite=$(cat cdc/parentSite)
         - replace_values () { jq -nrc --slurpfile r cdc/replacements '$r | map(select(.e=="'$BITBUCKET_BRANCH'") | "s/"+.r+"/{{"+.n+"}}/g") | join(";")'; }
         - mkdir -p cdc
+        # Get B2B Access Token 
+        - |
+          b2bAccessJwt=$(curl -s --fail-with-body \
+              -d partnerID=$cdcPartnerId \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d uid=$b2bAdminUid \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.b2b.itAdminLogin | jq -rc '.id_token')
+        - b2bTenantId=$(echo $b2bAccessJwt | jq -Rrc 'split(".")[1] | @base64d | fromjson | .tenantId')
+        - |
+          b2bAccessToken=$(curl -s --fail-with-body \
+              -d code=$(curl -GLs -o/dev/null --cookie noop -w "%{url_effective}" --fail-with-body \
+                  -d client_id=plainid-client \
+                  --data-urlencode 'redirect_uri=https://auth.us1.b2b-gigya.com/auth/realms/'$b2bTenantId'/protocol/openid-connect/auth?client_id=plainid&redirect_uri=https%3A%2F%2F'$b2bTenantId'.us1.b2b-gigya.com%2Fapp%2F&state=state&response_mode=fragment&response_type=code&scope=openid&nonce=12345&kc_idp_hint=tenant_idp' \
+                  -d state=state \
+                  -d response_mode=fragment \
+                  -d response_type=code \
+                  -d scope=openid \
+                  -d nonce=12345 \
+                  -d jwt=$b2bAccessJwt \
+                  https://auth.us1.b2b-gigya.com/auth/realms/sysidp/protocol/openid-connect/auth |
+                sed -re 's/.*[&#]code=([^&]+).*/\1/') \
+              -d grant_type=authorization_code \
+              -d client_id=plainid \
+              --data-urlencode 'redirect_uri=https://'$b2bTenantId'.us1.b2b-gigya.com/app/' \
+              https://auth.us1.b2b-gigya.com/auth/realms/$b2bTenantId/protocol/openid-connect/token |
+            jq -rc '.access_token')
         # Read Sites
         - |
           curl -s --fail-with-body \
