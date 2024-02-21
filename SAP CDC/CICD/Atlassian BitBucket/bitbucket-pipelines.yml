@@ -20,6 +20,82 @@ pipelines:
               https://admin.$cdcDC/admin.getPartnerSites | \
             jq '. as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k))')
         - echo $sites | jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . | sort_by(.groupApiKey) | map({name, apiKey}) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "{{env}}")' >apikeys.json
+        # Add Api Keys To Replacements
+        - |
+          jq -rc '.[] | .name, .apiKey' apikeys.json |
+            while IFS=$ read -r site; read -r apikey; do
+              echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$site-apikey\",\"r\":\"$apikey\"}" >> cdc/replacements
+            done
+        # Get B2B Access Token 
+        - |
+          b2bAccessJwt=$(curl -s --fail-with-body \
+              -d partnerID=$cdcPartnerId \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d uid=$b2bAdminUid \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.b2b.itAdminLogin | jq -rc '.id_token')
+        - b2bTenantId=$(echo $b2bAccessJwt | jq -Rrc 'split(".")[1] | @base64d | fromjson | .tenantId')
+        - |
+          b2bAccessToken=$(curl -s --fail-with-body \
+              -d code=$(curl -GLs -o/dev/null --cookie noop -w "%{url_effective}" --fail-with-body \
+                  -d client_id=plainid-client \
+                  --data-urlencode 'redirect_uri=https://auth.us1.b2b-gigya.com/auth/realms/'$b2bTenantId'/protocol/openid-connect/auth?client_id=plainid&redirect_uri=https%3A%2F%2F'$b2bTenantId'.us1.b2b-gigya.com%2Fapp%2F&state=state&response_mode=fragment&response_type=code&scope=openid&nonce=12345&kc_idp_hint=tenant_idp' \
+                  -d state=state \
+                  -d response_mode=fragment \
+                  -d response_type=code \
+                  -d scope=openid \
+                  -d nonce=12345 \
+                  -d jwt=$b2bAccessJwt \
+                  https://auth.us1.b2b-gigya.com/auth/realms/sysidp/protocol/openid-connect/auth |
+                sed -re 's/.*[&#]code=([^&]+).*/\1/') \
+              -d grant_type=authorization_code \
+              -d client_id=plainid \
+              --data-urlencode 'redirect_uri=https://'$b2bTenantId'.us1.b2b-gigya.com/app/' \
+              https://auth.us1.b2b-gigya.com/auth/realms/$b2bTenantId/protocol/openid-connect/token |
+            jq -rc '.access_token')
+        # Read B2B Environment
+        - |
+          b2bEnvironmentId=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment |
+            jq -r '.data[] | select(.externalId == "'$(curl -Gs --fail-with-body \
+                -d apiKey=$(jq -rc '.[0] | .apiKey' apikeys.json) \
+                --data-urlencode userKey=$cdcAppKey \
+                --data-urlencode secret=$cdcAppSecret \
+                -d httpStatusCodes=true \
+                https://accounts.$cdcDC/accounts.b2b.getPartnerSitesInfo |
+              jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | .SitesInfo[] | select(.SiteName == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").SiteId')'").id')
+        # Read B2B Partner
+        - |
+          b2bPartnerId=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/partners-ws |
+            jq -r '.data[0].id')
+        # Read B2B Schema
+        - |
+          b2bSchemaId=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/org-mgmt/schema/owner/$b2bPartnerId |
+            jq -r '.data.schemaId')
+        # Write B2B SSO Settings
+        - |
+          sed -i -e "$(replace_values)" "cdc/b2b/sso.sites.json"
+          curl -sX PUT --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              -H "Content-Type: application/json" \
+              -d @cdc/b2b/sso.sites.json \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/federation/jit-sso-sites
+        # Write B2B Organization Attributes
+        - |
+          jq -rc '.[] | ., .key' "cdc/b2b/organization.attributes.json" |
+            while IFS=$ read -r json; read -r key; do
+              curl -sX PUT --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  -H "Content-Type: application/json" \
+                  -d "$json" \
+                  https://api.us1.b2b-gigya.com/org-mgmt/schema/$b2bSchemaId/attribute/$key
+            done
         # Write Site Configurations
         - |
           jq -rc '.[] | .name, .apiKey' apikeys.json |
@@ -87,7 +163,7 @@ pipelines:
                     -d apiKey=$apikey \
                     --data-urlencode userKey=$cdcAppKey \
                     --data-urlencode secret=$cdcAppSecret \
-                    $(find "cdc/$site/policies" -type f | while read -r file; do bn=$(basename -s .json $file); sed -ie "$(replace_values)" $file; echo "--data-urlencode $bn@$file"; done) \
+                    $(find "cdc/$site/policies" -type f | while read -r file; do bn=$(basename -s .json $file); sed -i -e "$(replace_values)" $file; echo "--data-urlencode $bn@$file"; done) \
                     -d httpStatusCodes=true \
                     https://accounts.$cdcDC/accounts.setPolicies 
               fi
@@ -292,6 +368,39 @@ pipelines:
         - parentSite=$(cat cdc/parentSite)
         - replace_values () { jq -nrc --slurpfile r cdc/replacements '$r | map(select(.e=="'$BITBUCKET_BRANCH'") | "s/"+.r+"/{{"+.n+"}}/g") | join(";")'; }
         - mkdir -p cdc
+        - cp cdc/replacements cdc/replacements.bak
+        # Read Sites
+        - |
+          curl -s --fail-with-body \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d targetPartnerID=$cdcPartnerId \
+              -d httpStatusCodes=true \
+              https://admin.$cdcDC/admin.getPartnerSites |
+            jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(select(.apiKey == $k or .group.masterApiKey == $k)) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "{{env}}")' |
+            sed -e "$(replace_values)" > cdc/sites.json
+        - readarray -d " " -t asite < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(.name) | join(" ")' cdc/sites.json)")
+        - readarray -d " " -t aapikey < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(.apiKey) | join(" ")' cdc/sites.json)")
+        - commonProperties='.callId, .errorCode, .apiVersion, .statusCode, .statusReason, .time'
+        # Add Api Keys To Replacements
+        - |
+          for i in "${!asite[@]}"; do 
+            site="${asite[$i]}"
+            apikey="${aapikey[$i]}"
+            echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$site-apikey\",\"r\":\"$apikey\"}" >> cdc/replacements
+          done        
+        # Read B2B Sites Info
+        - mkdir -p cdc/b2b
+        - apikey="${aapikey[0]}"
+        - |
+          curl -Gs --fail-with-body \
+              -d apiKey=$apikey \
+              --data-urlencode userKey=$cdcAppKey \
+              --data-urlencode secret=$cdcAppSecret \
+              -d httpStatusCodes=true \
+              https://accounts.$cdcDC/accounts.b2b.getPartnerSitesInfo |
+            jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | .SitesInfo | map(select(.SiteName == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'")) | .[].SiteName |= (($d[.]|.o) // .) | .[].SiteName |= sub("'$BITBUCKET_BRANCH'"; "{{env}}")' |
+            sed -e "$(replace_values)" > "cdc/b2b/sites.info.json"
         # Get B2B Access Token 
         - |
           b2bAccessJwt=$(curl -s --fail-with-body \
@@ -320,19 +429,115 @@ pipelines:
               --data-urlencode 'redirect_uri=https://'$b2bTenantId'.us1.b2b-gigya.com/app/' \
               https://auth.us1.b2b-gigya.com/auth/realms/$b2bTenantId/protocol/openid-connect/token |
             jq -rc '.access_token')
-        # Read Sites
+        # Read B2B Environment
         - |
-          curl -s --fail-with-body \
-              --data-urlencode userKey=$cdcAppKey \
-              --data-urlencode secret=$cdcAppSecret \
-              -d targetPartnerID=$cdcPartnerId \
-              -d httpStatusCodes=true \
-              https://admin.$cdcDC/admin.getPartnerSites |
-            jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$BITBUCKET_BRANCH} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k)) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("'$BITBUCKET_BRANCH'"; "{{env}}")' |
-            sed -e "$(replace_values)" > cdc/sites.json
-        - readarray -d " " -t asite < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(.name) | join(" ")' cdc/sites.json)")
-        - readarray -d " " -t aapikey < <(printf '%s' "$(jq -rc '. | sort_by(.groupApiKey) | map(.apiKey) | join(" ")' cdc/sites.json)")
-        - commonProperties='.callId, .errorCode, .apiVersion, .statusCode, .statusReason, .time'
+          b2bEnvironmentId=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment |
+            jq -r '.data[] | select(.externalId == "'$(jq -r '.[0].SiteId' "cdc/b2b/sites.info.json")'").id')
+        # Read B2B Authz
+        - |
+          b2bAuthzId=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/authz-ws |
+            jq -r '.data[0].id')
+        # Read B2B Partner
+        - |
+          b2bPartnerId=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/partners-ws |
+            jq -r '.data[0].id')
+        # Read B2B SSO Settings
+        - |
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/federation/jit-sso-sites |
+            sed -e "$(replace_values)" | jq '.data' > "cdc/b2b/sso.sites.json"              
+        # Read B2B Organization Attributes
+        - |
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/org-mgmt/schema/owner/$b2bPartnerId |
+            jq '.data.attributes' > "cdc/b2b/organization.attributes.json"
+        # Read B2B Member Attributes
+        - |
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              https://api.us1.b2b-gigya.com/env-mgmt/partners-ws/$b2bPartnerId/identity-templates |
+            jq '.data[0].attributes' > "cdc/b2b/member.attributes.json"
+        # Read B2B Assets
+        - mkdir -p cdc/b2b/assets
+        - |
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              -d filter%5BownerId%5D=$b2bAuthzId \
+              https://api.us1.b2b-gigya.com/internal-assets/asset-type/search |
+            jq '.data' > "cdc/b2b/assets/types.json"
+          jq -rc '.[] | .id, .name' "cdc/b2b/assets/types.json" |
+            while IFS=$ read -r id; read -r name; do
+              mkdir -p "cdc/b2b/assets/$name"
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/internal-assets/asset-type/$id/action/search |
+                jq '.data' > "cdc/b2b/assets/$name/actions.json"              
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/internal-assets/4.0/asset-types/$id/rulesets |
+                jq '.data' > "cdc/b2b/assets/$name/rulesets.json"              
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/internal-assets/asset-type/$id/asset/search |
+                jq '.data' > "cdc/b2b/assets/$name/assets.json"              
+            done
+        # Read B2B Policies
+        - mkdir -p cdc/b2b/policies
+        - |
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              -d filter%5BownerId%5D=$b2bAuthzId \
+              https://api.us1.b2b-gigya.com/policy-mgmt/policy/list |
+            jq '.data' > "cdc/b2b/policies/list.json"
+          jq -rc '.[] | .id, .name' "cdc/b2b/policies/list.json" |
+            while IFS=$ read -r id; read -r name; do
+              mkdir -p "cdc/b2b/policies/$name"
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/policy-mgmt/policy/$id/asset-types |
+                jq '.data' > "cdc/b2b/policies/$name/asset.types.json"              
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/policy-mgmt/policy/$id/$b2bPartnerId/availability |
+                jq '.data' > "cdc/b2b/policies/$name/availability.json"              
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/policy-mgmt/policy/$id/dynamic-group/search |
+                jq '.data' > "cdc/b2b/policies/$name/automated.assignments.json"              
+            done
+        # Read B2B Applications
+        - mkdir -p cdc/b2b/applications
+        - |
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              -d filter%5BownerId%5D=$b2bAuthzId \
+              https://api.us1.b2b-gigya.com/internal-assets/4.0/applications |
+            jq '.data' > "cdc/b2b/applications/list.json"
+          jq -rc '.[] | .id, .attributes.name[0]' "cdc/b2b/applications/list.json" |
+            while IFS=$ read -r id; read -r name; do
+              mkdir -p "cdc/b2b/applications/$name"
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$id |
+                jq '.data' > "cdc/b2b/applications/$name/scopes.json"
+              echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json")\"}" >> cdc/replacements  
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/env-mgmt/environment/b2bEnvironmentId/federation/sp-config/$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json") |
+                jq '.data' > "cdc/b2b/applications/$name/federation.json"              
+              curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer $b2bAccessToken" \
+                  https://api.us1.b2b-gigya.com/internal-assets/asset-type/v3/application/$id |
+                jq '.data' > "cdc/b2b/applications/$name/asset.types.json"              
+            done
         # Read Schemas  
         - |
           for i in "${!asite[@]}"; do 
@@ -538,6 +743,7 @@ pipelines:
               sed -e "$(replace_values)" > "cdc/$site/federation/samlIdPs.json"
           done
         # Commit Changes
+        - mv cdc/replacements.bak cdc/replacements
         - |
           if [[ `git status --porcelain` ]]; then
             git config --global user.email 'refresh@build.pipeline'
