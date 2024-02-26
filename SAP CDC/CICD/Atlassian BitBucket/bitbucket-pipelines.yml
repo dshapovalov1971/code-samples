@@ -89,8 +89,8 @@ pipelines:
               https://api.us1.b2b-gigya.com/org-mgmt/schema/owner/$b2bPartnersId |
             jq -r '.data.schemaId')
         # Write B2B SSO Settings
+        - sed -i -e "$(replace_values)" "cdc/b2b/sso.sites.json"
         - |
-          sed -i -e "$(replace_values)" "cdc/b2b/sso.sites.json"
           curl -sX PUT --fail-with-body \
               -H "Authorization: Bearer $b2bAccessToken" \
               -H "Content-Type: application/json" \
@@ -154,20 +154,20 @@ pipelines:
                 jq '.data | map({name, id})')"
               jq -rc '.[] | ., .name' "cdc/b2b/assets/$name/rulesets.json"  |
                 while IFS=$ read -r json; read -r ruleset; do
-                  if [ "$name" != "All Assets" ]; then
-                    b2bAssetRulesetId="$(echo "$b2bAssetRulesets" | jq -rc --arg name "$ruleset" 'map(select(.name == $name)) | if length > 0 then .[0].id else "'$(curl -s --fail-with-body \
-                        -H "Authorization: Bearer $b2bAccessToken" \
-                        -H "Content-Type: application/json" \
-                        -d "{\"name\": \"$ruleset\"}" \
-                        https://api.us1.b2b-gigya.com/internal-assets/4.0/asset-types/$b2bAssetTypeId/rulesets | jq -rc '.data.id')'" end')"
+                  b2bAssetRulesetId="$(echo "$b2bAssetRulesets" | jq -rc --arg name "$ruleset" 'map(select(.name == $name)) | if length > 0 then .[0].id else "'$(curl -s --fail-with-body \
+                      -H "Authorization: Bearer $b2bAccessToken" \
+                      -H "Content-Type: application/json" \
+                      -d "{\"name\": \"$ruleset\"}" \
+                      https://api.us1.b2b-gigya.com/internal-assets/4.0/asset-types/$b2bAssetTypeId/rulesets | jq -rc '.data.id')'" end')"
+                  if [ "$ruleset" != "All Assets" ]; then
                     curl -sX PUT --fail-with-body \
                         -H "Authorization: Bearer $b2bAccessToken" \
                         -H "Content-Type: application/json" \
                         -d "$(echo $json | jq -rc --arg id $b2bAssetRulesetId 'del(.assetSchemaId) | .id |= $id')" \
                         https://api.us1.b2b-gigya.com/internal-assets/4.0/asset-types/$b2bAssetTypeId/rulesets/$b2bAssetRulesetId
                     echo
-                    echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name|$ruleset-b2b-asset-ruleset-id\",\"r\":\"$b2bAssetRulesetId\"}" >> cdc/replacements
                   fi
+                  echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name|$ruleset-b2b-asset-ruleset-id\",\"r\":\"$b2bAssetRulesetId\"}" >> cdc/replacements
                 done
               b2bAssets="$(curl -Gs --fail-with-body \
                   -H "Authorization: Bearer $b2bAccessToken" \
@@ -218,6 +218,47 @@ pipelines:
                     -d "@cdc/b2b/policies/$name/asset.types.json" \
                     https://api.us1.b2b-gigya.com/policy-mgmt/policy/$b2bPolicyId/asset-types
                 echo
+                sed -i -e  "$(replace_values)" "cdc/b2b/policies/$name/availability.json" 
+                curl -sX PUT --fail-with-body \
+                    -H "Authorization: Bearer $b2bAccessToken" \
+                    -H "Content-Type: application/json" \
+                    -d "@cdc/b2b/policies/$name/availability.json" \
+                    https://api.us1.b2b-gigya.com/policy-mgmt/policy/$b2bPolicyId/availability
+                echo
+              fi
+            done
+        # Write B2B Applications
+        - |
+          b2bApplications="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $b2bAccessToken" \
+              -d filter%5BownerId%5D=$b2bAuthzId \
+              https://api.us1.b2b-gigya.com/internal-assets/4.0/applications |
+            jq '.data | map({id, name: .attributes.name[0]})')"
+        - |
+          jq -rc '.[] | ., .attributes.name[0]' cdc/b2b/applications/list.json |
+            sed -e "$(replace_values)" | while IFS=$ read -r json; read -r name; do
+              if [ "$name" != "Delegated Admin" ]; then
+                b2bApplicationId="$(echo "$b2bApplications" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "'$(curl -s --fail-with-body \
+                    -H "Authorization: Bearer $b2bAccessToken" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"attributes\": {\"name\": [\"$name\"]}, \"ownerId\": \"$b2bAuthzId\"}" \
+                    https://api.us1.b2b-gigya.com/internal-assets/applications/v3 | jq -rc '.data.id')'" end')"
+                curl -sX PUT --fail-with-body \
+                    -H "Authorization: Bearer $b2bAccessToken" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $b2bApplicationId '.externalId |= $id | .id |= $id')" \
+                    https://api.us1.b2b-gigya.com/internal-assets/applications/v3/$b2bApplicationId
+                echo
+                sed -i -e  "$(replace_values)" "cdc/b2b/applications/$name/asset.types.json" 
+                curl -sX PUT --fail-with-body \
+                    -H "Authorization: Bearer $b2bAccessToken" \
+                    -H "Content-Type: application/json" \
+                    -d "$(jq -rc '{assetTypeIds: map(.id)}' "cdc/b2b/applications/$name/asset.types.json")" \
+                    https://api.us1.b2b-gigya.com/internal-assets/applications/v3/$b2bApplicationId/asset-types
+                echo
+                echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(curl -Gs --fail-with-body \
+                    -H "Authorization: Bearer $b2bAccessToken" \
+                    https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$b2bApplicationId | jq -rc --arg name "$name" '.data[] | select(.name == $name).clientId')\"}" >> cdc/replacements
               fi
             done
         # Write Site Configurations
@@ -671,8 +712,9 @@ pipelines:
               curl -Gs --fail-with-body \
                   -H "Authorization: Bearer $b2bAccessToken" \
                   https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$id |
-                sed -e "$(replace_values)" | jq '.data' > "cdc/b2b/applications/$name/scopes.json"
-              echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json")\"}" >> cdc/replacements  
+                jq '.data' > "cdc/b2b/applications/$name/scopes.json"
+              echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(jq -rc --arg name "$name" 'select(.name == $name).clientId' "cdc/b2b/applications/$name/scopes.json")\"}" >> cdc/replacements
+              sed -i -e "$(replace_values)" "cdc/b2b/applications/$name/scopes.json"
               curl -Gs --fail-with-body \
                   -H "Authorization: Bearer $b2bAccessToken" \
                   https://api.us1.b2b-gigya.com/env-mgmt/environment/b2bEnvironmentId/federation/sp-config/$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json") |
