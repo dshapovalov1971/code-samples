@@ -1,0 +1,451 @@
+variables:
+- group: ${{ variables['Build.SourceBranchName'] }}
+- name: commonProperties
+  value: .callId, .errorCode, .apiVersion, .statusCode, .statusReason, .time
+
+pool:
+  vmImage: ubuntu-latest
+
+schedules:
+- cron: '30 */3 * * *'
+  branches:
+    include:
+    - dev
+  always: true
+
+steps:
+- checkout: self
+  persistCredentials: true
+
+- bash: |
+    parentSite=$(cat cdc/parentSite)
+    mkdir -p cdc
+    curl -s --fail-with-body \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d targetPartnerID=$(cdcPartnerId) \
+        -d httpStatusCodes=true \
+        https://admin.$(cdcDC)/admin.getPartnerSites |
+      jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$(Build.SourceBranchName)} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k)) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("$(Build.SourceBranchName)"; "{{env}}")' |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
+      >cdc/sites.json
+  name: ReadSites
+  displayName: Read Sites
+
+- bash: |
+    echo '##vso[task.setvariable variable=sites]'"$(jq -rc '. | sort_by(.groupApiKey) | map(.name) | join(" ")' cdc/sites.json)"
+    echo '##vso[task.setvariable variable=apikeys]'"$(jq -rc '. | sort_by(.groupApiKey) | map(.apiKey) | join(" ")' cdc/sites.json)"
+  name: ReadApiKeys
+  displayName: Read API Keys
+
+- bash: |
+    cp replacements replacements.bak
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$site-apikey\",\"r\":\"$apikey\"}" >> replacements
+    done
+  name: AddApiKeysToReplacements
+  displayName: Add Api Keys To Replacements
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    apikey="${aapikey[0]}"    
+    curl -s --fail-with-body \
+        -d apiKey=$apikey \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d httpStatusCodes=true \
+        https://accounts.$(cdcDC)/accounts.sso.getConfig |
+      jq 'del('"$(commonProperties)"')' |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
+      > "cdc/sso.config.json"
+  name: ReadSSOConfiguration
+  displayName: Read SSO Configuration
+
+- bash: |
+    parentSite=$(cat cdc/parentSite)
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    mkdir -p cdc/b2b
+    apikey="${aapikey[0]}"
+    curl -Gs --fail-with-body \
+        -d apiKey=$apikey \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d httpStatusCodes=true \
+        https://accounts.$(cdcDC)/accounts.b2b.getPartnerSitesInfo |
+      jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | .SitesInfo | map(select(.SiteName == "'$(echo ${parentSite/"{{env}}"/$(Build.SourceBranchName)} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'")) | .[].SiteName |= (($d[.]|.o) // .) | .[].SiteName |= sub("'$(Build.SourceBranchName)'"; "{{env}}")' |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
+      > "cdc/b2b/sites.info.json"
+  name: ReadB2BSitesInfo
+  displayName: Read B2B Sites Info
+
+- bash: |
+    b2bAccessJwt=$(curl -s --fail-with-body \
+        -d partnerID=$(cdcPartnerId) \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d uid=$(b2bAdminUid) \
+        -d httpStatusCodes=true \
+        https://accounts.$(cdcDC)/accounts.b2b.itAdminLogin | jq -rc '.id_token')
+    b2bTenantId=$(echo $b2bAccessJwt | jq -Rrc 'split(".")[1] | @base64d | fromjson | .tenantId')
+    echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"b2b-tenant-id\",\"r\":\"$b2bTenantId\"}" >> replacements
+    b2bAccessToken=$(curl -s --fail-with-body \
+        -d code=$(curl -GLs -o/dev/null --cookie noop -w "%{url_effective}" --fail-with-body \
+            -d client_id=plainid-client \
+            --data-urlencode 'redirect_uri=https://auth.us1.b2b-gigya.com/auth/realms/'$b2bTenantId'/protocol/openid-connect/auth?client_id=plainid&redirect_uri=https%3A%2F%2F'$b2bTenantId'.us1.b2b-gigya.com%2Fapp%2F&state=state&response_mode=fragment&response_type=code&scope=openid&nonce=12345&kc_idp_hint=tenant_idp' \
+            -d state=state \
+            -d response_mode=fragment \
+            -d response_type=code \
+            -d scope=openid \
+            -d nonce=12345 \
+            -d jwt=$b2bAccessJwt \
+            https://auth.us1.b2b-gigya.com/auth/realms/sysidp/protocol/openid-connect/auth |
+          sed -re 's/.*[&#]code=([^&]+).*/\1/') \
+        -d grant_type=authorization_code \
+        -d client_id=plainid \
+        --data-urlencode 'redirect_uri=https://'$b2bTenantId'.us1.b2b-gigya.com/app/' \
+        https://auth.us1.b2b-gigya.com/auth/realms/$b2bTenantId/protocol/openid-connect/token |
+      jq -rc '.access_token')
+    b2bEnvironmentId=$(curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $b2bAccessToken" \
+        https://api.us1.b2b-gigya.com/env-mgmt/environment |
+      jq -r '.data[] | select(.externalId == "'$(jq -r '.[0].SiteId' "cdc/b2b/sites.info.json")'").id')
+    echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"b2b-environment-id\",\"r\":\"$b2bEnvironmentId\"}" >> replacements  
+    b2bAuthzId=$(curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $b2bAccessToken" \
+        https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/authz-ws |
+      jq -r '.data[0].id')
+    echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"b2b-authz-id\",\"r\":\"$b2bAuthzId\"}" >> replacements  
+    b2bPartnersId=$(curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $b2bAccessToken" \
+        https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/partners-ws |
+      jq -r '.data[0].id')
+    echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"b2b-partners-id\",\"r\":\"$b2bPartnersId\"}" >> replacements
+    echo '##vso[task.setvariable variable=b2bAccessToken]'"$b2bAccessToken"
+    echo '##vso[task.setvariable variable=b2bEnvironmentId]'"$b2bEnvironmentId"
+    echo '##vso[task.setvariable variable=b2bAuthzId]'"$b2bAuthzId"
+    echo '##vso[task.setvariable variable=b2bPartnersId]'"$b2bPartnersId"
+  name: ReadB2BAccessToken
+  displayName: Read B2B Access Token
+
+- bash: |
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        https://api.us1.b2b-gigya.com/env-mgmt/environment/$(b2bEnvironmentId)/federation/jit-sso-sites |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      jq '.data' > "cdc/b2b/sso.sites.json"              
+  name: ReadB2BSSOSettings
+  displayName: Read B2B SSO Settings
+
+- bash: |
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        https://api.us1.b2b-gigya.com/org-mgmt/schema/owner/$(b2bPartnersId) |
+      jq '.data.attributes' > "cdc/b2b/organization.attributes.json"
+  name: ReadB2BOrganizationAttributes
+  displayName: Read B2B Organization Attributes
+
+- bash: |
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        https://api.us1.b2b-gigya.com/env-mgmt/partners-ws/$(b2bPartnersId)/identity-templates |
+      jq '.data[0].attributes' > "cdc/b2b/member.attributes.json"
+  name: ReadB2BMemberAttributes
+  displayName: Read B2B Member Attributes
+
+- bash: |
+    mkdir -p cdc/b2b/assets
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        -d filter%5BownerId%5D=$(b2bAuthzId) \
+        https://api.us1.b2b-gigya.com/internal-assets/asset-type/search |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      jq '.data' > cdc/b2b/assets/types.json
+    jq -rc '.[] | .id, .name' cdc/b2b/assets/types.json |
+      while IFS=$ read -r id; read -r name; do
+        echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name-b2b-asset-type-id\",\"r\":\"$id\"}" >> replacements
+        mkdir -p "cdc/b2b/assets/$name"
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/internal-assets/asset-type/$id/action/search |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/assets/$name/actions.json"              
+        jq -rc '.[] | .id, .name' "cdc/b2b/assets/$name/actions.json"  |
+          while IFS=$ read -r id; read -r action; do
+            echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name|$action-b2b-asset-action-id\",\"r\":\"$id\"}" >> replacements
+          done
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/internal-assets/4.0/asset-types/$id/rulesets |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/assets/$name/rulesets.json"              
+        jq -rc '.[] | .id, .name' "cdc/b2b/assets/$name/rulesets.json"  |
+          while IFS=$ read -r id; read -r ruleset; do
+            echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name|$ruleset-b2b-asset-ruleset-id\",\"r\":\"$id\"}" >> replacements
+          done
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/internal-assets/asset-type/$id/asset/search |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/assets/$name/assets.json"              
+        jq -rc '.[] | .id, .name' "cdc/b2b/assets/$name/assets.json"  |
+          while IFS=$ read -r id; read -r asset; do
+            echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name|$asset-b2b-asset-id\",\"r\":\"$id\"}" >> replacements
+          done
+      done
+  name: ReadB2BAssets
+  displayName: Read B2B Assets
+
+- bash: |
+    mkdir -p cdc/b2b/policies
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        -d filter%5BownerId%5D=$(b2bAuthzId) \
+        https://api.us1.b2b-gigya.com/policy-mgmt/policy/list |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      jq '.data' > "cdc/b2b/policies/list.json"
+    jq -rc '.[] | .id, .name' "cdc/b2b/policies/list.json" |
+      while IFS=$ read -r id; read -r name; do
+        mkdir -p "cdc/b2b/policies/$name"
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/policy-mgmt/policy/$id/asset-types |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/policies/$name/asset.types.json"
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/policy-mgmt/policy/$id/$(b2bPartnersId)/availability |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/policies/$name/availability.json"
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/policy-mgmt/policy/$id/dynamic-group/search |
+          jq '.data' > "cdc/b2b/policies/$name/automated.assignments.json"
+        echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name-b2b-role-id\",\"r\":\"$(jq -rc '.[0].id' "cdc/b2b/policies/$name/automated.assignments.json")\"}" >> replacements
+        sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" "cdc/b2b/policies/$name/automated.assignments.json"
+      done
+    sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" cdc/sites.json
+  name: ReadB2BPolicies
+  displayName: Read B2B Policies
+
+- bash: |
+    mkdir -p cdc/b2b/applications
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        -d filter%5BownerId%5D=$(b2bAuthzId) \
+        https://api.us1.b2b-gigya.com/internal-assets/4.0/applications |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      jq '.data' > "cdc/b2b/applications/list.json"
+    jq -rc '.[] | .id, .attributes.name[0]' "cdc/b2b/applications/list.json" |
+      while IFS=$ read -r id; read -r name; do
+        mkdir -p "cdc/b2b/applications/$name"
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$id |
+          jq '.data' > "cdc/b2b/applications/$name/scopes.json"
+        echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json")\"}" >> replacements
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/env-mgmt/environment/$(b2bEnvironmentId)/federation/sp-config/$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json") |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/applications/$name/federation.json"              
+        sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" "cdc/b2b/applications/$name/scopes.json"
+        curl -Gs --fail-with-body \
+            -H "Authorization: Bearer $(b2bAccessToken)" \
+            https://api.us1.b2b-gigya.com/internal-assets/asset-type/v3/application/$id |
+          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          jq '.data' > "cdc/b2b/applications/$name/asset.types.json"              
+      done
+  name: ReadB2BApplications
+  displayName: Read B2B Applications
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site/schema"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d include=profileSchema,dataSchema,subscriptionsSchema,internalSchema \
+          -d httpStatusCodes=true \
+          https://accounts.$(cdcDC)/accounts.getSchema |
+        jq -rc 'del('"$(commonProperties)"') | to_entries[] | .key, .value' |
+          while IFS=$ read -r key; read -r value; do
+            echo "$value" | jq '.' > "cdc/$site/schema/$key.json"
+          done
+    done
+  name: ReadSchemas
+  displayName: Read Schemas
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site/schema"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d httpStatusCodes=true \
+          https://accounts.$(cdcDC)/accounts.getConsentsStatements |
+        jq '.preferences' > "cdc/$site/consent.statements.json"
+    done
+  name: ReadConsentStatements
+  displayName: Read Consent Statements
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site/policies"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d httpStatusCodes=true \
+          https://accounts.$(cdcDC)/accounts.getPolicies |
+        jq -rc 'del('"$(commonProperties)"') | to_entries[] | .key, .value' |
+        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+          while IFS=$ read -r key; read -r value; do
+            echo "$value" | jq '.' > "cdc/$site/policies/$key.json"
+          done
+    done
+  name: ReadPolicies
+  displayName: Read Policies
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d include=metadata,screenSetID,html,css,javascript,translations \
+          -d httpStatusCodes=true \
+          https://accounts.$(cdcDC)/accounts.getScreenSets |
+        jq '.screenSets' > "cdc/$site/screenSets.json"
+    done
+  name: ReadScreenSets
+  displayName: Read ScreenSets
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    apikey="${aapikey[0]}"    
+    curl -s --fail-with-body \
+        -d apiKey=$apikey \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d httpStatusCodes=true \
+        https://accounts.$(cdcDC)/accounts.rba.getPolicy |
+        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      jq '.policy' > "cdc/rba.policy.json"
+  name: ReadRBAPolicy
+  displayName: Read RBA Policy
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d httpStatusCodes=true \
+          https://accounts.$(cdcDC)/accounts.extensions.list |
+        jq '.result' > "cdc/$site/extensions.json"
+    done
+  name: ReadExtensions
+  displayName: Read Extensions
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site/dataflows"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d scope=all \
+          -d httpStatusCodes=true \
+          https://idx.$(cdcDC)/idx.getGlobalVariables |
+        jq '.data' |
+        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
+        > "cdc/$site/dataflows/globalVariables.json"
+    done        
+  name: ReadIDXVariables
+  displayName: Read IDX Variables
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site/dataflows"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d query='select * from dataflow' \
+          -d httpStatusCodes=true \
+          https://idx.$(cdcDC)/idx.search |
+        jq '.result // [] | map(del(.lastRuntime))' > "cdc/$site/dataflows/dataflows.json"
+    done
+  name: ReadIDXDataflows
+  displayName: Read IDX Dataflows
+
+- bash: |
+    readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
+    for i in "${!asite[@]}"; do 
+      site="${asite[$i]}"
+      apikey="${aapikey[$i]}"
+      mkdir -p "cdc/$site/dataflows"
+      curl -s --fail-with-body \
+          -d apiKey=$apikey \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d query='select * from scheduling' \
+          -d httpStatusCodes=true \
+          https://idx.$(cdcDC)/idx.search |              
+        jq '.result // [] | map(del(.jobId, .nextJobStartTime, .updateTime))' | 
+        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
+        > "cdc/$site/dataflows/scheduling.json"
+    done
+  name: ReadIDXScheduling
+  displayName: Read IDX Scheduling
+
+- bash: |
+    mv replacements.bak replacements
+    if [[ `git status --porcelain` ]]; then
+      git config --global user.email 'refresh@build.pipeline'
+      git config --global user.name 'Refresh Pipeline'
+      git add --all
+      git commit -m 'Refresh Pipeline [skip ci]'
+      git push origin HEAD:$(Build.SourceBranchName)
+    fi
+  name: CommitChanges
+  displayName: Commit Changes
