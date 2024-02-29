@@ -1,0 +1,74 @@
+variables:
+- group: ${{ variables['Build.SourceBranchName'] }}
+
+pool:
+  vmImage: ubuntu-latest
+
+schedules:
+- cron: '0 */3 * * *'
+  branches:
+    include:
+    - dev
+  always: true
+
+steps:
+- checkout: self
+  persistCredentials: true
+
+- task: AzureCLI@2
+  name: ReadAppConfig
+  displayName: Read App Config
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az appconfig kv export -y -n $(echo $(ciamResourceGroupName) | sed 's/RG/CS/; s/[^-]*$/AppConfig/') -d file --format json \
+        --path >(jq 'del(.items[] | select(.key|startswith("e-")))' >ciam-app-config.json) --profile appconfig/kvset
+      sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+.n+"}}/g") | join(";")')" ciam-app-config.json
+
+- task: AzureCLI@2
+  name: DownloadEmailTemplates
+  displayName: Download Email Templates
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      mkdir -p emailtemplates
+      az storage blob download-batch --account-name $(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/') \
+        -s emailtemplates -d ./emailtemplates --overwrite
+      find ./emailtemplates -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+.n+"}}/g") | join(";")')" {} \;
+
+- task: AzureCLI@2
+  name: ReadLogicApps
+  displayName: Read Logic Apps
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az logic workflow list | jq -r -c '.[] | select(.resourceGroup == "$(ciamResourceGroupName)") | .name, .definition' |
+        while IFS=$ read -r name; read -r definition; do
+          wf=$(echo "$name" | perl -pe 's/(.*?)([A-Z])([^-]*$)/\L$2\E$3/')
+          src=$(echo "$definition" | jq '.' | \
+            perl -pe 's/(^\s*)"(.+?)"(: )/$1$2$3/g; s/'\''/\\'\''/g; \s/(?<!\\)"/'\''/g; s/\\"/"/g; s/,$//g' | \
+            perl -pe 's/^/    /g; s/^    {/{/; s/(^\s*)(\S*[\$\-\"\/]\S*)(?=: )/$1'\''$2'\''/g' | \
+            perl -pe 's/(?<=uri: '\'')https:\/\/.*.azconfig.io(?=\/kv)/\${configStore.properties.endpoint}/g' | \
+            perl -pe 's/'$(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/')'/\${storageAccount.name}/g' | \
+            perl -0777pe 's/(workflow: {\n(\s|\n)*id: ).*?([A-Z])([^-]*)'\''\n(.*)\n(.*)/$1\L$3\E$4.id\n$6/g')
+          ciam=$(cat ciam.bicep | perl -0777pe 's/(resource '$wf'(.|\n)+?\n    definition: )(.|\n)+?(\n    parameters)/$1^^^replace^^^$4/')
+          echo "${ciam/^^^replace^^^/"$src"}" >ciam.bicep
+          sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+.n+"}}/g") | join(";")')" ciam.bicep
+        done
+
+- bash: |
+    if [[ `git status --porcelain` ]]; then
+      git config --global user.email 'refresh@build.pipeline'
+      git config --global user.name 'Refresh Pipeline'
+      git add --all
+      git commit -m 'Refresh Pipeline [skip ci]'
+      git push origin HEAD:$(Build.SourceBranchName)
+    fi
+  name: CommitChanges
+  displayName: Commit Changes
