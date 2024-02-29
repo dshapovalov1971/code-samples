@@ -713,12 +713,12 @@ pipelines:
                   -H "Authorization: Bearer $b2bAccessToken" \
                   https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$id |
                 jq '.data' > "cdc/b2b/applications/$name/scopes.json"
-              echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(jq -rc --arg name "$name" 'select(.name == $name).clientId' "cdc/b2b/applications/$name/scopes.json")\"}" >> cdc/replacements
-              sed -i -e "$(replace_values)" "cdc/b2b/applications/$name/scopes.json"
+              echo "{\"e\":\"$BITBUCKET_BRANCH\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json")\"}" >> cdc/replacements
               curl -Gs --fail-with-body \
                   -H "Authorization: Bearer $b2bAccessToken" \
-                  https://api.us1.b2b-gigya.com/env-mgmt/environment/b2bEnvironmentId/federation/sp-config/$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json") |
+                  https://api.us1.b2b-gigya.com/env-mgmt/environment/$b2bEnvironmentId/federation/sp-config/$(jq -rc '.[0].clientId' "cdc/b2b/applications/$name/scopes.json") |
                 sed -e "$(replace_values)" | jq '.data' > "cdc/b2b/applications/$name/federation.json"              
+              sed -i -e "$(replace_values)" "cdc/b2b/applications/$name/scopes.json"
               curl -Gs --fail-with-body \
                   -H "Authorization: Bearer $b2bAccessToken" \
                   https://api.us1.b2b-gigya.com/internal-assets/asset-type/v3/application/$id |
