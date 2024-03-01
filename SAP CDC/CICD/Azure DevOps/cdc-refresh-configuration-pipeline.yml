@@ -35,17 +35,21 @@ steps:
 - bash: |
     echo '##vso[task.setvariable variable=sites]'"$(jq -rc '. | sort_by(.groupApiKey) | map(.name) | join(" ")' cdc/sites.json)"
     echo '##vso[task.setvariable variable=apikeys]'"$(jq -rc '. | sort_by(.groupApiKey) | map(.apiKey) | join(" ")' cdc/sites.json)"
+    echo '##vso[task.setvariable variable=siteids]'"$(jq -rc '. | sort_by(.groupApiKey) | map(.siteID) | join(" ")' cdc/sites.json)"
   name: ReadApiKeys
   displayName: Read API Keys
 
 - bash: |
     cp replacements replacements.bak
     readarray -d " " -t asite < <(printf '%s' "$(sites)")
+    readarray -d " " -t asiteid < <(printf '%s' "$(siteids)")
     readarray -d " " -t aapikey < <(printf '%s' "$(apikeys)")
     for i in "${!asite[@]}"; do 
       site="${asite[$i]}"
+      siteid="${asiteid[$i]}"
       apikey="${aapikey[$i]}"
       echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$site-apikey\",\"r\":\"$apikey\"}" >> replacements
+      echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$site-siteid\",\"r\":\"$siteid\"}" >> replacements
     done
   name: AddApiKeysToReplacements
   displayName: Add Api Keys To Replacements
@@ -84,6 +88,8 @@ steps:
   displayName: Read B2B Sites Info
 
 - bash: |
+    readarray -d " " -t asiteid < <(printf '%s' "$(siteids)")
+    siteid="${asiteid[0]}"    
     b2bAccessJwt=$(curl -s --fail-with-body \
         -d partnerID=$(cdcPartnerId) \
         --data-urlencode userKey=$(cdcAppKey) \
@@ -113,7 +119,7 @@ steps:
     b2bEnvironmentId=$(curl -Gs --fail-with-body \
         -H "Authorization: Bearer $b2bAccessToken" \
         https://api.us1.b2b-gigya.com/env-mgmt/environment |
-      jq -r '.data[] | select(.externalId == "'$(jq -r '.[0].SiteId' "cdc/b2b/sites.info.json")'").id')
+      jq -r '.data[] | select(.externalId == "'$siteid'").id')
     echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"b2b-environment-id\",\"r\":\"$b2bEnvironmentId\"}" >> replacements  
     b2bAuthzId=$(curl -Gs --fail-with-body \
         -H "Authorization: Bearer $b2bAccessToken" \
@@ -262,6 +268,19 @@ steps:
       done
   name: ReadB2BApplications
   displayName: Read B2B Applications
+
+- bash: |
+    mkdir -p cdc/b2b/notifications/en
+    curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        -d filter%5BownerId%5D=$(b2bPartnersId) \
+        -d filter%5Btopic%5D=id-mgmt.v1.existing-member-invitation.generated \
+        -d filter%5Blocale%5D=en \
+        https://api.us1.b2b-gigya.com/notifier/v1/template |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      jq '.data' > cdc/b2b/notifications/en/id-mgmt.v1.existing-member-invitation.generated.json
+  name: ReadB2BEmailTemplates  
+  displayName: Read B2B Email Templates
 
 - bash: |
     readarray -d " " -t asite < <(printf '%s' "$(sites)")
