@@ -28,19 +28,21 @@ steps:
         -d httpStatusCodes=true \
         https://admin.$(cdcDC)/admin.getPartnerSites |
       jq '. as $p | .sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$(Build.SourceBranchName)} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey | . as $k | $p.sites | map(. | select(.apiKey == $k or .group.masterApiKey == $k))')
-    echo $sites | jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . | sort_by(.groupApiKey) | map({name, apiKey}) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("$(Build.SourceBranchName)"; "{{env}}")' >apikeys.json
+    echo $sites | jq --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .r) as $d | . | sort_by(.groupApiKey) | map({name, apiKey, siteID}) | .[].name |= (($d[.]|.o) // .) | .[].name |= sub("$(Build.SourceBranchName)"; "{{env}}")' >apikeys.json
   name: ReadApiKeys
   displayName: Read API Keys
   
 - bash: |
-    jq -rc '.[] | .name, .apiKey' apikeys.json |
-      while IFS=$ read -r site; read -r apikey; do
+    jq -rc '.[] | .name, .apiKey, .siteID' apikeys.json |
+      while IFS=$ read -r site; read -r apikey; read -r siteid; do
         echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$site-apikey\",\"r\":\"$apikey\"}" >> replacements
+        echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$site-siteid\",\"r\":\"$siteid\"}" >> replacements
       done
   name: AddApiKeysToReplacements
   displayName: Add Api Keys To Replacements
 
 - bash: |
+    siteid=$(jq -rc '.[0] | .siteID' apikeys.json)
     b2bAccessJwt=$(curl -s --fail-with-body \
         -d partnerID=$(cdcPartnerId) \
         --data-urlencode userKey=$(cdcAppKey) \
@@ -70,7 +72,7 @@ steps:
     b2bEnvironmentId=$(curl -Gs --fail-with-body \
         -H "Authorization: Bearer $b2bAccessToken" \
         https://api.us1.b2b-gigya.com/env-mgmt/environment |
-      jq -r '.data[] | select(.externalId == "'$(jq -r '.[0].SiteId' "cdc/b2b/sites.info.json")'").id')
+      jq -r '.data[] | select(.externalId == "'$siteid'").id')
     echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"b2b-environment-id\",\"r\":\"$b2bEnvironmentId\"}" >> replacements  
     b2bAuthzId=$(curl -Gs --fail-with-body \
         -H "Authorization: Bearer $b2bAccessToken" \
@@ -248,14 +250,14 @@ steps:
         -H "Authorization: Bearer $(b2bAccessToken)" \
         -d filter%5BownerId%5D=$(b2bAuthzId) \
         https://api.us1.b2b-gigya.com/internal-assets/4.0/applications |
-      jq '.data | map({id, name: .attributes.name[0]})')"
-    jq -rc '.[] | ., .attributes.name[0]' cdc/b2b/applications/list.json |
-      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" | while IFS=$ read -r json; read -r name; do
+      jq '.data | map({id, schema, name: .attributes.name[0]})')"
+    jq -rc '.[] | ., .attributes.name[0], .attributes.color[0]' cdc/b2b/applications/list.json |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" | while IFS=$ read -r json; read -r name; read -r color; do
         if [ "$name" != "Delegated Admin" ]; then
           b2bApplicationId="$(echo "$b2bApplications" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "'$(curl -s --fail-with-body \
               -H "Authorization: Bearer $(b2bAccessToken)" \
               -H "Content-Type: application/json" \
-              -d "{\"attributes\": {\"name\": [\"$name\"]}, \"ownerId\": \"$(b2bAuthzId)\"}" \
+              -d "{\"attributes\": {\"name\": [\"$name\"], \"color\": [\"$color\"]}, \"ownerId\": \"$(b2bAuthzId)\", \"schema\": \"$(echo "$b2bApplications" | jq -rc '.[0].schema')\"}" \
               https://api.us1.b2b-gigya.com/internal-assets/applications/v3 | jq -rc '.data.id')'" end')"
           curl -sX PUT --fail-with-body \
               -H "Authorization: Bearer $(b2bAccessToken)" \
@@ -270,24 +272,45 @@ steps:
               -d "$(jq -rc '{assetTypeIds: map(.id)}' "cdc/b2b/applications/$name/asset.types.json")" \
               https://api.us1.b2b-gigya.com/internal-assets/applications/v3/$b2bApplicationId/asset-types
           echo
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer $(b2bAccessToken)" \
+              https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$b2bApplicationId
           echo "{\"e\":\"$(Build.SourceBranchName)\",\"n\":\"$name-b2b-app-client-id\",\"r\":\"$(curl -Gs --fail-with-body \
               -H "Authorization: Bearer $(b2bAccessToken)" \
-              https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$b2bApplicationId | jq -rc --arg name "$name" '.data[] | select(.name == $name).clientId')\"}" >> replacements
+              https://api.us1.b2b-gigya.com/internal-assets/scopes/v3/$b2bApplicationId | jq -rc '.data[0].clientId')\"}" >> replacements
         fi
       done
   name: WriteB2BApplications
   displayName: Write B2B Applications
 
 - bash: |
+    b2bNotificationId="$(curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        -d filter%5BownerId%5D=$(b2bPartnersId) \
+        -d filter%5Btopic%5D=id-mgmt.v1.existing-member-invitation.generated \
+        -d filter%5Blocale%5D=en \
+        https://api.us1.b2b-gigya.com/notifier/v1/template |
+      jq -rc '.data[0].id')"
+    sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" cdc/b2b/notifications/en/id-mgmt.v1.existing-member-invitation.generated.json
+    curl -sX PUT --fail-with-body \
+      -H "Authorization: Bearer $(b2bAccessToken)" \
+      -H "Content-Type: application/json" \
+      -d "$(jq -rc --arg id $b2bNotificationId --arg html "$(perl -0777pe '$h=`cat email-header.html`;$f=`cat email-footer.html`;s/(?<=<!-- BEGIN HEADER -->)(.|\n)+?(?=<!-- END HEADER -->)/$h/;s/(?<=<!-- BEGIN FOOTER -->)(.|\n)+?(?=<!-- END FOOTER -->)/$f/;s/{{current-year}}/'$(date +%Y)'/g;s/\r//g;s/___firstName___/__USER_NAME__/g;s/___accessItemText___/'"$(jq -nrc --arg locale en --slurpfile rc ciam-app-config.json '$rc[0].items[] | select(.key=="access-item-text").value | fromjson[$locale][] | select(.a=="_").l')"'/g;'"$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" emailtemplates/approved-email/en.html)" '.[0] | .id |= $id | .content.EMAIL.html |= $html' cdc/b2b/notifications/en/id-mgmt.v1.existing-member-invitation.generated.json)" \
+      https://api.us1.b2b-gigya.com/notifier/v1/template/$b2bNotificationId    
+  name: WriteB2BEmailTemplates  
+  displayName: Write B2B Email Templates
+
+- bash: |
+    sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" cdc/sites.json
     jq -rc '.[] | .name, .apiKey' apikeys.json |
       while IFS=$ read -r site; read -r apikey; do
         curl -s --fail-with-body \
             -d apiKey=$apikey \
             --data-urlencode userKey=$(cdcAppKey) \
             --data-urlencode secret=$(cdcAppSecret) \
-            $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .validDomains.login | map(. | select(.|test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d '\''trustedSiteURLs="+.+"'\''") else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end') \
+            "$(jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .validDomains.login | map(. | select(.|test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d '\''trustedSiteURLs="+.+"'\''") else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end' cdc/sites.json)" \
             "$(jq -rc '.[] | select(.name == "'$site'") | .cnames.apiDomainPrefix | if . then "-d gigyaSettings={\"enableSSLForCNAME\": true, \"customAPIDomainPrefix\": \""+.+"\"}" else "" end' cdc/sites.json | sed -e 's/ //')" \
-            $(echo $sites | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end') \
+            "$(jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end' cdc/sites.json)" \
             "$(jq -rc '.[] | select(.name == "'$site'") | .globalConf | if . then . else "" end  | if . then "-d globalConf="+. else "" end' cdc/sites.json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" | perl -0777pe 's/ //')" \
             -d httpStatusCodes=true \
             https://admin.$(cdcDC)/admin.setSiteConfig         
@@ -358,7 +381,7 @@ steps:
       while IFS=$ read -r site; read -r apikey; do
         parent=$([ "$apikey" == "$parentApiKey" ] && echo true || echo false)
         if [ -d cdc/$site ]; then
-          if [ "$site" == "{{env}}.sample.com" ]; then
+          if [ "$site" == "{{env}}.engineering.sample.com" ]; then
             parentSite=$(cat cdc/parentSite)
             cp cdc/$parentSite/policies/codeVerification.json cdc/$site/policies/codeVerification.json
             cp cdc/$parentSite/policies/emailNotifications.json cdc/$site/policies/emailNotifications.json
@@ -509,6 +532,7 @@ steps:
             -d httpStatusCodes=true \
             https://idx.$(cdcDC)/idx.search |              
           jq '.result // [] | map({name, id, dataflowName})')"
+        sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" cdc/$site/dataflows/scheduling.json
         jq -rc --arg df "$schedules" '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/scheduling.json |
           sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" |
           while IFS=$ read -r ss; do
