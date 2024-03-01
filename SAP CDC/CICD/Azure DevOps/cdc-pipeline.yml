@@ -534,7 +534,6 @@ steps:
           jq '.result // [] | map({name, id, dataflowName})')"
         sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" cdc/$site/dataflows/scheduling.json
         jq -rc --arg df "$schedules" '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/scheduling.json |
-          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" |
           while IFS=$ read -r ss; do
             curl -s --fail-with-body \
                 -d apiKey=$apikey \
