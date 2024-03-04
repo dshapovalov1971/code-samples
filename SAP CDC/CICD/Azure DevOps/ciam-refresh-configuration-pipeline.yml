@@ -53,7 +53,7 @@ steps:
           wf=$(echo "$name" | perl -pe 's/(.*?)([A-Z])([^-]*$)/\L$2\E$3/')
           src=$(echo "$definition" | jq '.' | \
             perl -pe 's/(^\s*)"(.+?)"(: )/$1$2$3/g; s/'\''/\\'\''/g; \s/(?<!\\)"/'\''/g; s/\\"/"/g; s/,$//g' | \
-            perl -pe 's/^/    /g; s/^    {/{/; s/(^\s*)(\S*[\$\-\"\/]\S*)(?=: )/$1'\''$2'\''/g' | \
+            perl -pe 's/^/    /g; s/^    {/{/; s/(^\s*)(\S*[\$\-\"\/\(\)]\S*)(?=: )/$1'\''$2'\''/g' | \
             perl -pe 's/(?<=uri: '\'')https:\/\/.*.azconfig.io(?=\/kv)/\${configStore.properties.endpoint}/g' | \
             perl -pe 's/'$(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/')'/\${storageAccount.name}/g' | \
             perl -0777pe 's/(workflow: {\n(\s|\n)*id: ).*?([A-Z])([^-]*)'\''\n(.*)\n(.*)/$1\L$3\E$4.id\n$6/g')
