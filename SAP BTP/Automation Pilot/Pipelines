@@ -6,6 +6,25 @@
   "owner": "<<<TENANT_ID>>>",
   "inputs": [
     {
+      "id": "pipelines-<<<TENANT_ID>>>:Service.Instances:1",
+      "name": "Service.Instances",
+      "description": null,
+      "catalog": "pipelines-<<<TENANT_ID>>>",
+      "owner": null,
+      "version": 1,
+      "keys": {
+        "services": {
+          "type": "array",
+          "sensitive": false,
+          "description": null
+        }
+      },
+      "values": {
+        "services": "[{\n  \"displayName\": \"cas-assembly-service\",\n  \"service\": \"content-agent\",\n  \"plan\": \"standard\",\n  \"parameters\": {\n    \"roles\": [\n      \"Assemble\"\n    ]\n  }\n},{\n  \"displayName\": \"connectivity\",\n  \"service\": \"connectivity\",\n  \"plan\": \"connectivity_proxy\"\n}]"
+      },
+      "tags": {}
+    },
+    {
       "id": "pipelines-<<<TENANT_ID>>>:Service.Keys:1",
       "name": "Service.Keys",
       "description": null,
@@ -34,6 +53,13 @@
             "valueFrom": {
               "inputReference": "pipelines-<<<TENANT_ID>>>:Service.Keys:1",
               "inputKey": "cis-central"
+            }
+          },
+          {
+            "alias": "services",
+            "valueFrom": {
+              "inputReference": "pipelines-<<<TENANT_ID>>>:Service.Instances:1",
+              "inputKey": "services"
             }
           }
         ],
@@ -106,9 +132,42 @@
             "errorMessages": []
           },
           {
+            "execute": "cis-sapcp:ObtainServiceManagerBinding:1",
+            "input": {
+              "subAccountId": "$(.subaccount.output.message)",
+              "serviceKey": "$(.cis-central-service-key)"
+            },
+            "alias": "get-service-manager-binding",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": null,
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          },
+          {
+            "execute": "sm-sapcp:ListServiceInstances:1",
+            "input": {
+              "serviceKey": "$(.get-service-manager-binding.output.serviceKey)"
+            },
+            "alias": "list-services",
+            "progressMessage": null,
+            "initialDelay": null,
+            "pause": null,
+            "when": null,
+            "validate": null,
+            "autoRetry": null,
+            "repeat": null,
+            "errorMessages": []
+          },
+          {
             "execute": "utils-sapcp:ForEach:1",
             "input": {
-              "command": "utils-sapcp:Void:1"
+              "inputs": "$(.services | map(select(.displayName as $n | $.list-services.output.serviceInstances | map(select(.name == $n)) | length == 0)))",
+              "defaultValues": "{\"serviceKey\": $(.get-service-manager-binding.output.serviceKey)}",
+              "command": "sm-sapcp:CreateServiceInstance:1"
             },
             "alias": "create-services",
             "progressMessage": null,
@@ -151,38 +210,6 @@
         "feature:logs": "",
         "feature:priority": "medium"
       }
-    },
-    {
-      "configuration": {
-        "values": [],
-        "output": {},
-        "executors": [
-          {
-            "execute": "scripts-sapcp:ExecuteScript:1",
-            "input": {
-              "script": "YnRwIGxpc3Qgc2VydmljZXMvaW5zdGFuY2UgLS1zdWJhY2NvdW50IHFh"
-            },
-            "alias": "check-service",
-            "progressMessage": null,
-            "initialDelay": null,
-            "pause": null,
-            "when": null,
-            "validate": null,
-            "autoRetry": null,
-            "repeat": null,
-            "errorMessages": []
-          }
-        ],
-        "listeners": []
-      },
-      "id": "pipelines-<<<TENANT_ID>>>:Create.Service:1",
-      "name": "Create.Service",
-      "description": null,
-      "catalog": "pipelines-<<<TENANT_ID>>>",
-      "version": 1,
-      "inputKeys": {},
-      "outputKeys": {},
-      "tags": {}
     }
   ]
 }
