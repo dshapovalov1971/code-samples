@@ -2,6 +2,8 @@ variables:
 - group: ${{ variables['Build.SourceBranchName'] }}
 - name: templateFile
   value: shared.bicep
+- name: pipelineFile
+  value: shared-pipeline.yml
 
 trigger:
   branches:
@@ -18,6 +20,42 @@ pool:
   vmImage: ubuntu-latest
 
 steps:
+- checkout: self
+  persistCredentials: true
+
+- bash: |    
+    sed -i -e "$(jq -nrc --slurpfile v <(grep -Po "^- task:\s*?.*" $(pipelineFile) | grep -Po "[\S]+@[\S]+?" | sed -e 's/^/{"o":"/g;s/$/"}/g') \
+      --slurpfile rv <(curl -s --fail-with-body https://raw.githubusercontent.com/MicrosoftDocs/azure-devops-yaml-schema/main/task-reference/TOC.yml | yq -o=j -I=0 '.items[].items[0].name | split("@")') \
+      '$v | unique | map(.r = (.o | split("@")[0] as $t | $t + "@" + ($rv | map(select(.[0] == $t)) | first | .[1])) | select(.r != .o)) | map("s|"+.o+"|"+.r+"|g") | join(";")')" $(pipelineFile)
+  condition: eq(variables['Build.SourceBranchName'], 'dev')
+  name: TaskVersions
+  displayName: Task Versions
+  
+- task: AzureCLI@2
+  name: ProviderVersions
+  condition: eq(variables['Build.SourceBranchName'], 'dev')
+  displayName: Provider Versions
+  inputs:
+    azureSubscription: $(sharedServiceConnection)
+    scriptType: bash
+    scriptLocation: inlineScript
+    inlineScript: |
+      sed -i -e "$(az provider list --query '[].{namespace:namespace,resourceTypes:resourceTypes[].{resourceType:resourceType,apiVersion:apiVersions[] | [?length(@)==`10`] | [0]}}' |
+        jq -rc --slurpfile v <(grep -Po "resource .+? '[^']+?'" $(templateFile) | grep -Po "(?<=').*(?=')" | sed -e 's/^/{"o":"/g;s/$/"}/g') \
+          '. as $rv | $v | unique | map(.r = (.o | split("/")[0] as $ns | (split("@")[0] | split("/")[1:] | join("/")) as $rt | $ns + "/" + $rt + "@" + ($rv[] | select(.namespace == $ns).resourceTypes[] | select(.resourceType == $rt).apiVersion)) | select(.r != .o)) | map("s|"+.o+"|"+.r+"|g") | join(";")')" $(templateFile)
+
+- bash: |
+    if [[ `git status --porcelain` ]]; then
+      git config --global user.email 'devops@build.pipeline'
+      git config --global user.name 'Devops Pipeline'
+      git add --all
+      git commit -m 'Devops Pipeline [skip ci]'
+      git push origin HEAD:$(Build.SourceBranchName)
+    fi
+  condition: eq(variables['Build.SourceBranchName'], 'dev')
+  name: CommitChanges
+  displayName: Commit Changes
+
 - script: |
     az bicep build --file $(templateFile)
   name: LintBicepCode
@@ -32,7 +70,7 @@ steps:
     scriptLocation: 'inlineScript'
     inlineScript: |
       az deployment group validate --resource-group $(sharedResourceGroupName) \
-        -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret) marketingSubscriptionId=$(marketingSubscriptionId)
+        -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret) marketingSubscriptionId=$(marketingSubscriptionId) frontdoorApiUrl=$(frontdoorApiUrl)
         
 - task: AzureCLI@2
   name: Deploy
@@ -43,4 +81,4 @@ steps:
     scriptLocation: 'inlineScript'
     inlineScript: |
       az deployment group create --name $(Build.BuildNumber)  --resource-group $(sharedResourceGroupName) \
-        -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret) marketingSubscriptionId=$(marketingSubscriptionId)
+        -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret) marketingSubscriptionId=$(marketingSubscriptionId) frontdoorApiUrl=$(frontdoorApiUrl)
