@@ -1,5 +1,7 @@
 variables:
 - group: ${{ variables['Build.SourceBranchName'] }}
+- name: pipelineFile
+  value: ciam-refresh-configuration-pipeline.yml
 
 pool:
   vmImage: ubuntu-latest
@@ -14,6 +16,14 @@ schedules:
 steps:
 - checkout: self
   persistCredentials: true
+
+- bash: |    
+    sed -i -e "$(jq -nrc --slurpfile v <(grep -Po "^- task:\s*?.*" $(pipelineFile) | grep -Po "[\S]+@[\S]+?" | sed -e 's/^/{"o":"/g;s/$/"}/g') \
+      --slurpfile rv <(curl -s --fail-with-body https://raw.githubusercontent.com/MicrosoftDocs/azure-devops-yaml-schema/main/task-reference/TOC.yml | yq -o=j -I=0 '.items[].items[0].name | split("@")') \
+      '$v | unique | map(.r = (.o | split("@")[0] as $t | $t + "@" + ($rv | map(select(.[0] == $t)) | first | .[1])) | select(.r != .o)) | map("s|"+.o+"|"+.r+"|g") | join(";")')" $(pipelineFile)
+  condition: eq(variables['Build.SourceBranchName'], 'dev')
+  name: TaskVersions
+  displayName: Task Versions
 
 - task: AzureCLI@2
   name: ReadAppConfig
