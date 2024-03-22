@@ -373,7 +373,7 @@ steps:
         --data-urlencode secret=$(cdcAppSecret) \
         -d httpStatusCodes=true \
         https://accounts.$(cdcDC)/accounts.rba.getPolicy |
-        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
+      sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
       jq '.policy' > "cdc/rba.policy.json"
   name: ReadRBAPolicy
   displayName: Read RBA Policy
@@ -391,6 +391,7 @@ steps:
           --data-urlencode secret=$(cdcAppSecret) \
           -d httpStatusCodes=true \
           https://accounts.$(cdcDC)/accounts.extensions.list |
+        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" |
         jq '.result' > "cdc/$site/extensions.json"
     done
   name: ReadExtensions
@@ -431,7 +432,7 @@ steps:
           -d query='select * from dataflow' \
           -d httpStatusCodes=true \
           https://idx.$(cdcDC)/idx.search |
-        jq '.result // [] | map(del(.lastRuntime))' > "cdc/$site/dataflows/dataflows.json"
+        jq '.result // [] | map(del(.lastRuntime)) | sort_by(.id)' > "cdc/$site/dataflows/dataflows.json"
     done
   name: ReadIDXDataflows
   displayName: Read IDX Dataflows
@@ -450,7 +451,7 @@ steps:
           -d query='select * from scheduling' \
           -d httpStatusCodes=true \
           https://idx.$(cdcDC)/idx.search |              
-        jq '.result // [] | map(del(.jobId, .nextJobStartTime, .updateTime))' | 
+        jq '.result // [] | map(del(.jobId, .nextJobStartTime, .updateTime)) | sort_by(.id)' | 
         sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
         > "cdc/$site/dataflows/scheduling.json"
     done
