@@ -44,8 +44,9 @@ steps:
     azureSubscription: $(ciamServiceConnection)
     scriptType: bash
     scriptLocation: inlineScript
+    failOnStandardError: true
     inlineScript: |
-      sed -i -e "$(az provider list --query '[].{namespace:namespace,resourceTypes:resourceTypes[].{resourceType:resourceType,apiVersion:apiVersions[] | [?length(@)==`10`] | [0]}}' |
+      sed -i -e "$(az provider list --query '[].{namespace: namespace,resourceTypes: resourceTypes[].{resourceType: resourceType, apiVersion: defaultApiVersion || (apiVersions[] | [?length(@)==`10`] | [0])}}' |
         jq -rc --slurpfile v <(grep -Po "resource .+? '[^']+?'" $(templateFile) | grep -Po "(?<=').*(?=')" | sed -e 's/^/{"o":"/g;s/$/"}/g') \
           '. as $rv | $v | unique | map(.r = (.o | split("/")[0] as $ns | (split("@")[0] | split("/")[1:] | join("/")) as $rt | $ns + "/" + $rt + "@" + ($rv[] | select(.namespace == $ns).resourceTypes[] | select(.resourceType == $rt).apiVersion)) | select(.r != .o)) | map("s|"+.o+"|"+.r+"|g") | join(";")')" $(templateFile)
 
@@ -73,6 +74,7 @@ steps:
     azureSubscription: $(ciamServiceConnection)
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
+    failOnStandardError: true
     inlineScript: |
       az deployment group validate --resource-group $(ciamResourceGroupName) \
         -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret)
@@ -84,6 +86,7 @@ steps:
     azureSubscription: $(ciamServiceConnection)
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
+    failOnStandardError: true
     inlineScript: |
       sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" $(templateFile)
       az deployment group create --name $(Build.BuildNumber)  --resource-group $(ciamResourceGroupName) \
@@ -96,10 +99,11 @@ steps:
     azureSubscription: $(ciamServiceConnection)
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
+    failOnStandardError: true
     inlineScript: |
       sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" ciam-app-config.json
       az appconfig kv import -y -n $(echo $(ciamResourceGroupName) | sed 's/RG/CS/; s/[^-]*$/AppConfig/') -s file --format json \
-        --path ciam-app-config.json --profile appconfig/kvset
+        --path ciam-app-config.json --profile appconfig/kvset --import-mode all --only-show-errors
 
 - task: AzureCLI@2
   name: UploadEmailTemplates
@@ -108,9 +112,10 @@ steps:
     azureSubscription: $(ciamServiceConnection)
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
+    failOnStandardError: true
     inlineScript: |
       mkdir -p emailtemplates
       find ./emailtemplates -type f -exec perl -i -0777pe '$h=`cat email-header.html`; $f=`cat email-footer.html`; s/(?<=<!-- BEGIN HEADER -->)(.|\n)+?(?=<!-- END HEADER -->)/$h/; s/(?<=<!-- BEGIN FOOTER -->)(.|\n)+?(?=<!-- END FOOTER -->)/$f/;s/{{current-year}}/'$(date +%Y)'/g;'"$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" {} \;
       az storage blob upload-batch --account-name $(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/') \
-        -d emailtemplates -s ./emailtemplates --overwrite
+        -d emailtemplates -s ./emailtemplates --overwrite --no-progress --only-show-errors
 
