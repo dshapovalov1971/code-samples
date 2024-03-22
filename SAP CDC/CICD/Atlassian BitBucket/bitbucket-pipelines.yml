@@ -843,7 +843,7 @@ pipelines:
                 -d query='select * from dataflow' \
                 -d httpStatusCodes=true \
                 https://idx.$cdcDC/idx.search |
-              jq '.result // [] | map(del(.lastRuntime))' > "cdc/$site/dataflows/dataflows.json"
+              jq '.result // [] | map(del(.lastRuntime)) | sort_by(.id)' > "cdc/$site/dataflows/dataflows.json"
           done
         # Read IDX Scheduling
         - |
@@ -858,7 +858,7 @@ pipelines:
                 -d query='select * from scheduling' \
                 -d httpStatusCodes=true \
                 https://idx.$cdcDC/idx.search |              
-              jq '.result // [] | map(del(.jobId, .nextJobStartTime))' | 
+              jq '.result // [] | map(del(.jobId, .nextJobStartTime)) | sort_by(.id)' | 
               sed -e "$(replace_values)" > "cdc/$site/dataflows/scheduling.json"
           done
         # Read Communication Channels
