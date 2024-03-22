@@ -11,7 +11,7 @@ var nameStructure = split(resourceGroup().name, '-')
 var resourcePrefix = '${nameStructure[0]}-${nameStructure[1]}'
 var env = nameStructure[3]
 
-resource configStore 'Microsoft.AppConfiguration/configurationStores@2023-03-01' = if (!contains(resourceGroup().tags, '${resourcePrefix}-CS-${env}-AppConfig')) {
+resource configStore 'Microsoft.AppConfiguration/configurationStores@2019-10-01' = if (!contains(resourceGroup().tags, '${resourcePrefix}-CS-${env}-AppConfig')) {
   name: '${resourcePrefix}-CS-${env}-AppConfig'
   location: location
   sku: {
@@ -44,7 +44,7 @@ resource configStoreKeyValue 'Microsoft.AppConfiguration/configurationStores/key
   }
 }]
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-02-01' = if (!contains(resourceGroup().tags, '${resourcePrefix}-KV-${env}-KeyVault')) {
+resource keyVault 'Microsoft.KeyVault/vaults@2019-09-01' = if (!contains(resourceGroup().tags, '${resourcePrefix}-KV-${env}-KeyVault')) {
   name: '${resourcePrefix}-KV-${env}-KeyVault'
   location: location
   properties: {
@@ -70,7 +70,7 @@ var secrets = [
   'sap-cdc-app-key'
   'sap-cdc-app-secret'
 ]
-resource keyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023-02-01' = [for (item, i) in secrets: if (!contains(resourceGroup().tags, '${resourcePrefix}-KV-${env}-KeyVault')) {
+resource keyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2019-09-01' = [for (item, i) in secrets: if (!contains(resourceGroup().tags, '${resourcePrefix}-KV-${env}-KeyVault')) {
   parent: keyVault
   name: item
   properties: {
@@ -78,7 +78,7 @@ resource keyVaultSecret 'Microsoft.KeyVault/vaults/secrets@2023-02-01' = [for (i
   }
 }]
 
-resource tag 'Microsoft.Resources/tags@2022-09-01' = {
+resource tag 'Microsoft.Resources/tags@2023-07-01' = {
   name: 'default'
   properties: {
     tags: {
@@ -311,6 +311,12 @@ resource emailNotification 'Microsoft.Logic/workflows@2019-05-01' = {
               'Succeeded'
             ]
           }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'Send_email0'
+              staticResultOptions: 'Disabled'
+            }
+          }
           type: 'ApiConnection'
         }
         Set_email_subject: {
@@ -337,6 +343,15 @@ resource emailNotification 'Microsoft.Logic/workflows@2019-05-01' = {
         '$connections': {
           defaultValue: {}
           type: 'Object'
+        }
+      }
+      staticResults: {
+        Send_email0: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
         }
       }
       triggers: {
@@ -421,6 +436,15 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                 Request: '@{join(body(\'New_access_filter\'), \',\')}'
               }
               EventType: 'request_for_approval'
+              OrgData: {
+                City: '@{variables(\'record\')[\'city\']}'
+                Country: '@{variables(\'record\')[\'country\']}'
+                Industry: '@{variables(\'record\')[\'industry\']}'
+                OrgName: '@{variables(\'record\')[\'company\']}'
+                PostalCode: '@{variables(\'record\')[\'zip\']}'
+                StreetAddr: '@{variables(\'record\')[\'address\']}'
+                WebsiteAddress: '@{variables(\'record\')[\'website\']}'
+              }
               UserData: {
                 CompanyRole: '@{variables(\'record\')[\'role\']}'
                 EmailId: '@{variables(\'record\')[\'email\']}'
@@ -442,6 +466,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
             New_access_filter: [
               'Succeeded'
             ]
+          }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'CIAM_Event_Request_For_Approval4'
+              staticResultOptions: 'Disabled'
+            }
           }
           type: 'Http'
         }
@@ -471,6 +501,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
             Is_there_approver_email: [
               'Succeeded'
             ]
+          }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'CIAM_Event_Workflow_Outcome12'
+              staticResultOptions: 'Disabled'
+            }
           }
           type: 'Http'
         }
@@ -550,6 +586,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                         'Succeeded'
                       ]
                     }
+                    runtimeConfiguration: {
+                      staticResult: {
+                        name: 'CIAM_Event_Approver_Email_Sent7'
+                        staticResultOptions: 'Disabled'
+                      }
+                    }
                     type: 'Http'
                   }
                   GA_Event_Approver_Email_Sent: {
@@ -580,6 +622,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                       uri: 'https://www.google-analytics.com/mp/collect'
                     }
                     runAfter: {}
+                    runtimeConfiguration: {
+                      staticResult: {
+                        name: 'GA_Event_Approver_Email_Sent5'
+                        staticResultOptions: 'Disabled'
+                      }
+                    }
                     type: 'Http'
                   }
                   GA_Event_Approver_Email_Sent1: {
@@ -613,6 +661,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                       GA_Event_Approver_Email_Sent: [
                         'Succeeded'
                       ]
+                    }
+                    runtimeConfiguration: {
+                      staticResult: {
+                        name: 'GA_Event_Approver_Email_Sent16'
+                        staticResultOptions: 'Disabled'
+                      }
                     }
                     type: 'Http'
                   }
@@ -658,6 +712,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                       CIAM_Event_Approver_Email_Sent: [
                         'Succeeded'
                       ]
+                    }
+                    runtimeConfiguration: {
+                      staticResult: {
+                        name: 'Send_approval_email8'
+                        staticResultOptions: 'Disabled'
+                      }
                     }
                     type: 'ApiConnectionWebhook'
                   }
@@ -819,6 +879,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
               'Succeeded'
             ]
           }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'GA_Event_Request_For_Approval0'
+              staticResultOptions: 'Disabled'
+            }
+          }
           type: 'Http'
         }
         GA_Event_Request_For_Approval1: {
@@ -852,6 +918,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
             Convert_configuration: [
               'Succeeded'
             ]
+          }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'GA_Event_Request_For_Approval11'
+              staticResultOptions: 'Disabled'
+            }
           }
           type: 'Http'
         }
@@ -887,6 +959,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
               'Succeeded'
             ]
           }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'GA_Event_Workflow_Outcome9'
+              staticResultOptions: 'Disabled'
+            }
+          }
           type: 'Http'
         }
         GA_Event_Workflow_Outcome1: {
@@ -920,6 +998,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
             GA_Event_Workflow_Outcome: [
               'Succeeded'
             ]
+          }
+          runtimeConfiguration: {
+            staticResult: {
+              name: 'GA_Event_Workflow_Outcome110'
+              staticResultOptions: 'Disabled'
+            }
           }
           type: 'Http'
         }
@@ -1067,6 +1151,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                     uri: 'https://accounts.@{body(\'Convert_configuration\')[\'sap-cdc-data-center\']}/accounts.b2b.setAccountOrganizationInfo'
                   }
                   runAfter: {}
+                  runtimeConfiguration: {
+                    staticResult: {
+                      name: 'Assign_organization_member19'
+                      staticResultOptions: 'Disabled'
+                    }
+                  }
                   type: 'Http'
                 }
               }
@@ -1185,6 +1275,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                   uri: 'https://accounts.@{body(\'Convert_configuration\')[\'sap-cdc-data-center\']}/accounts.getAccountInfo'
                 }
                 runAfter: {}
+                runtimeConfiguration: {
+                  staticResult: {
+                    name: 'Get_user_info2'
+                    staticResultOptions: 'Disabled'
+                  }
+                }
                 type: 'Http'
               }
               Get_user_roles: {
@@ -1200,6 +1296,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                   'Parse_"Get_user_info"': [
                     'Succeeded'
                   ]
+                }
+                runtimeConfiguration: {
+                  staticResult: {
+                    name: 'Get_user_roles3'
+                    staticResultOptions: 'Disabled'
+                  }
                 }
                 type: 'Http'
               }
@@ -1410,6 +1512,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                     uri: 'https://accounts.@{body(\'Convert_configuration\')[\'sap-cdc-data-center\']}/accounts.identifiers.find'
                   }
                   runAfter: {}
+                  runtimeConfiguration: {
+                    staticResult: {
+                      name: 'Find_UID_by_email13'
+                      staticResultOptions: 'Disabled'
+                    }
+                  }
                   type: 'Http'
                 }
                 'Parse_"Find_UID_by_email"': {
@@ -1485,6 +1593,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                     uri: 'https://accounts.@{body(\'Convert_configuration\')[\'sap-cdc-data-center\']}/accounts.setAccountInfo'
                   }
                   runAfter: {}
+                  runtimeConfiguration: {
+                    staticResult: {
+                      name: 'Approve_user_for_login15'
+                      staticResultOptions: 'Disabled'
+                    }
+                  }
                   type: 'Http'
                 }
                 CIAM_Event_Create_Org: {
@@ -1511,6 +1625,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                       'Succeeded'
                     ]
                   }
+                  runtimeConfiguration: {
+                    staticResult: {
+                      name: 'CIAM_Event_Create_Org18'
+                      staticResultOptions: 'Disabled'
+                    }
+                  }
                   type: 'Http'
                 }
                 Finalize_user_registration: {
@@ -1526,6 +1646,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                     Approve_user_for_login: [
                       'Succeeded'
                     ]
+                  }
+                  runtimeConfiguration: {
+                    staticResult: {
+                      name: 'Finalize_user_registration16'
+                      staticResultOptions: 'Disabled'
+                    }
                   }
                   type: 'Http'
                 }
@@ -1623,6 +1749,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                       'Succeeded'
                     ]
                   }
+                  runtimeConfiguration: {
+                    staticResult: {
+                      name: 'Register_organization17'
+                      staticResultOptions: 'Disabled'
+                    }
+                  }
                   type: 'Http'
                 }
                 Set_BPID_in_record: {
@@ -1659,6 +1791,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                       uri: 'https://accounts.@{body(\'Convert_configuration\')[\'sap-cdc-data-center\']}/accounts.deleteAccount'
                     }
                     runAfter: {}
+                    runtimeConfiguration: {
+                      staticResult: {
+                        name: 'Delete_pending_user14'
+                        staticResultOptions: 'Disabled'
+                      }
+                    }
                     type: 'Http'
                   }
                 }
@@ -1780,6 +1918,12 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
                 path: '/codeless/v1.0/users/@{encodeURIComponent(body(\'Send_approval_email\')?[\'UserId\'])}'
               }
               runAfter: {}
+              runtimeConfiguration: {
+                staticResult: {
+                  name: 'Get_O365_user_profile11'
+                  staticResultOptions: 'Disabled'
+                }
+              }
               type: 'ApiConnection'
             }
             Set_approver_email_id: {
@@ -2111,6 +2255,270 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' = {
         '$connections': {
           defaultValue: {}
           type: 'Object'
+        }
+      }
+      staticResults: {
+        Approve_user_for_login15: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Assign_organization_member19: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        CIAM_Event_Approver_Email_Sent7: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        CIAM_Event_Create_Org18: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        CIAM_Event_Request_For_Approval4: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        CIAM_Event_Workflow_Outcome12: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Delete_pending_user14: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Finalize_user_registration16: {
+          outputs: {
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Find_UID_by_email13: {
+          outputs: {
+            body: {
+              apiVersion: 2
+              callId: 'ad819dcf93da486281b19938f26a6494'
+              errorCode: 0
+              identifiers: {
+                'gigya.com/identifiers/email': [
+                  'rwtwtrwryrtyty@mailinator.com'
+                ]
+                'gigya.com/identifiers/uid': [
+                  '874aa0ae04df444ea7b1feef4ccb8ee6'
+                ]
+              }
+              statusCode: 200
+              statusReason: 'OK'
+              time: '2024-03-14T05:59:20.284Z'
+            }
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        GA_Event_Approver_Email_Sent16: {
+          outputs: {
+            headers: {}
+            statusCode: 'NoContent'
+          }
+          status: 'Succeeded'
+        }
+        GA_Event_Approver_Email_Sent5: {
+          outputs: {
+            headers: {}
+            statusCode: 'NoContent'
+          }
+          status: 'Succeeded'
+        }
+        GA_Event_Request_For_Approval0: {
+          outputs: {
+            headers: {}
+            statusCode: 'NoContent'
+          }
+          status: 'Succeeded'
+        }
+        GA_Event_Request_For_Approval11: {
+          outputs: {
+            headers: {}
+            statusCode: 'NoContent'
+          }
+          status: 'Succeeded'
+        }
+        GA_Event_Workflow_Outcome110: {
+          outputs: {
+            headers: {}
+            statusCode: 'NoContent'
+          }
+          status: 'Succeeded'
+        }
+        GA_Event_Workflow_Outcome9: {
+          outputs: {
+            headers: {}
+            statusCode: 'NoContent'
+          }
+          status: 'Succeeded'
+        }
+        Get_O365_user_profile11: {
+          outputs: {
+            body: {
+              mail: 'approver-email-test-9358345@mailinator.com'
+            }
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Get_user_info2: {
+          outputs: {
+            body: {
+              UID: '874aa0ae04df444ea7b1feef4ccb8ee6'
+              apiVersion: 2
+              callId: 'efd18dd45d294be1a6f33e6e6497b5ff'
+              created: '2024-01-08T23:51:51.278Z'
+              createdTimestamp: 1704757911000
+              data: {
+                ZSTREET: 'aaa'
+                accessRequest: 'P&A'
+                approved: true
+                lastApprovalStatus: 'no-new-access'
+              }
+              errorCode: 0
+              groups: {
+                organizations: [
+                  {
+                    bpid: '942c9d794cbb44308486f2fbd8cc0679'
+                    job: 'Design Engineer'
+                    lastUpdated: '2024-01-24T06:48:49.305Z'
+                    lastUpdatedTimestamp: 1706078929305
+                    memberSince: '2024-01-08T23:53:00.994Z'
+                    memberSinceTimestamp: 1704757980994
+                    orgId: '26a98d92-64a6-4fe3-93f7-f7720d4a2d1c'
+                    orgName: 'ECENTA America Inc.'
+                    roles: [
+                      'cea8c067-e51d-443a-be79-9043f00c2b5c'
+                    ]
+                    ssoDefinitions: {
+                      rolesDefinedByOrigin: false
+                    }
+                    status: 'active'
+                  }
+                ]
+              }
+              isActive: true
+              isRegistered: true
+              isVerified: true
+              lastLogin: '2024-03-18T22:29:01.127Z'
+              lastLoginTimestamp: 1710800941000
+              lastUpdated: '2024-03-18T22:45:14.849Z'
+              lastUpdatedTimestamp: 1710801914849
+              loginProvider: 'site'
+              oldestDataUpdated: '2024-01-08T23:51:51.278Z'
+              oldestDataUpdatedTimestamp: 1704757911278
+              password: {
+                created: '2024-02-02T22:35:35.032Z'
+              }
+              profile: {
+                address: '123'
+                city: 'Hole'
+                country: 'India'
+                email: 'rwtwtrwryrtyty@mailinator.com'
+                firstName: 'First'
+                lastName: 'Last'
+                locale: 'en'
+                phones: [
+                  {
+                    number: '+15551234567'
+                    type: 'main'
+                  }
+                ]
+                state: 'AL'
+                work: {
+                  company: 'ECENTA America Inc.'
+                  industry: 'Aggregate / Cement'
+                  location: 'dummy'
+                  title: 'Design Engineer'
+                }
+                zip: '01234'
+              }
+              registered: '2024-01-08T23:52:57.148Z'
+              registeredTimestamp: 1704757977000
+              socialProviders: 'site'
+              statusCode: 200
+              statusReason: 'OK'
+              time: '2024-03-18T23:25:28.245Z'
+              verified: '2024-01-08T23:52:32.202Z'
+              verifiedTimestamp: 1704757952202
+            }
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Get_user_roles3: {
+          outputs: {
+            body: {
+              apiVersion: 2
+              callId: '32456f34031c47f98f14ddbecbd216eb'
+              errorCode: 0
+              policiesNotFound: []
+              requestedPolicies: [
+                {
+                  policyName: 'P&A'
+                  roleId: 'cea8c067-e51d-443a-be79-9043f00c2b5c'
+                }
+              ]
+              statusCode: 200
+              statusReason: 'OK'
+              time: '2024-03-18T23:25:28.451Z'
+            }
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Register_organization17: {
+          outputs: {
+            body: {
+              bpid: '6c0c714670b54c81ba70d7ab03699696'
+            }
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
+        }
+        Send_approval_email8: {
+          outputs: {
+            body: {
+              SelectedOption: 'Approve'
+              UserEmailAddress: 'approver-email-test-9358345@mailinator.com'
+              UserId: 'user-id-guid'
+              UserTenantId: 'user-tenant-id-guid'
+            }
+            headers: {}
+            statusCode: 'OK'
+          }
+          status: 'Succeeded'
         }
       }
       triggers: {
