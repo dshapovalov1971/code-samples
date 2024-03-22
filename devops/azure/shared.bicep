@@ -18,7 +18,7 @@ resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' existing = {
   scope: resourceGroup('${marketingSubscriptionId}', '${resourcePrefix}-RG-${env}-SAPCDCCIAM')
 }
 
-resource tag 'Microsoft.Resources/tags@2022-09-01' = {
+resource tag 'Microsoft.Resources/tags@2023-07-01' = {
   name: 'default'
   properties: {
     tags: {
@@ -27,7 +27,7 @@ resource tag 'Microsoft.Resources/tags@2022-09-01' = {
   }
 }
 
-resource apiManagementInstance 'Microsoft.ApiManagement/service@2022-08-01' = {
+resource apiManagementInstance 'Microsoft.ApiManagement/service@2021-08-01' = {
   name: '${resourcePrefix}-APIM-${env}-SharedApim'
   location: location
   sku: {
