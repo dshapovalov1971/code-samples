@@ -4,9 +4,7 @@ variables:
 trigger:
   branches:
     include:
-    - dev
-    - qa
-    - prd
+    - '*'
   paths:
     include:
     - cdc-pipeline.yml
@@ -19,6 +17,42 @@ pool:
   vmImage: ubuntu-latest
 
 steps:
+- bash: |
+    sites="$(curl -s --fail-with-body \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d targetPartnerID=$(cdcPartnerId) \
+        -d httpStatusCodes=true \
+        https://admin.$(cdcDC)/admin.getPartnerSites)"
+    cat cdc/sites.json |
+      sed -e "s/{{.*-siteid}}/0/g;$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" |
+      jq -rc 'sort_by(.groupApiKey)[] | .name, .datacenter, .description' |
+      while IFS=$ read -r name; read -r datacenter; read -r description; do
+        name="$(echo ${name/"{{env}}"/$(Build.SourceBranchName)} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')"
+        apikey="$(echo "$sites" | jq -rc '.sites[] | select(.name == "'$name'").apiKey')"
+        [ ! "$apikey" ] && newSite=true
+        : ${apikey:=$(curl -s --fail-with-body \
+            --data-urlencode userKey=$(cdcAppKey) \
+            --data-urlencode secret=$(cdcAppSecret) \
+            -d partnerID=$(cdcPartnerId) \
+            -d dataCenter=$datacenter \
+            -d baseDomain="$name" \
+            -d description="$description" \
+            -d httpStatusCodes=true \
+            https://admin.$(cdcDC)/admin.createSite |
+          jq -rc '.apiKey')}
+        [ "$parentApiKey" ] && [ "$newSite" ] && curl -s --fail-with-body \
+            -d apiKey=$apikey \
+            --data-urlencode userKey=$(cdcAppKey) \
+            --data-urlencode secret=$(cdcAppSecret) \
+            -d siteGroupOwner=$parentApiKey \
+            -d httpStatusCodes=true \
+            https://admin.$(cdcDC)/admin.setSiteConfig
+        if [ ! "$parentApiKey" ]; then parentApiKey=$apikey; fi
+      done
+  name: CheckSiteGroup
+  displayName: Check Site Group
+
 - bash: |
     parentSite=$(cat cdc/parentSite)
     sites=$(curl -s --fail-with-body \
@@ -41,6 +75,26 @@ steps:
   name: AddApiKeysToReplacements
   displayName: Add Api Keys To Replacements
 
+- bash: |
+    apikey=$(jq -rc '.[0] | .apiKey' apikeys.json)
+    if [ "$(curl -s --fail-with-body \
+            --data-urlencode userKey=$(cdcAppKey) \
+            --data-urlencode secret=$(cdcAppSecret) \
+            -d partnerId=$(cdcPartnerId) \
+            -d httpStatusCodes=true \
+            https://admin.$(cdcDC)/accounts.b2b.getPartnerSitesInfo |
+          jq -rc '.SitesInfo[] | select(.SiteId == '$(jq -rc '.[0].siteID' apikeys.json)').statusStr')" != "Active" ]; then
+      curl -s --fail-with-body \
+            -d apiKey=$apikey \
+            --data-urlencode userKey=$(cdcAppKey) \
+            --data-urlencode secret=$(cdcAppSecret) \
+            -d httpStatusCodes=true \
+            https://admin.$(cdcDC)/accounts.b2b.enableForSite
+      sleep 15
+    fi
+  name: CheckB2BActivation
+  displayName: Check B2B Activation
+  
 - bash: |
     siteid=$(jq -rc '.[0] | .siteID' apikeys.json)
     b2bAccessJwt=$(curl -s --fail-with-body \
@@ -107,13 +161,25 @@ steps:
   displayName: Write B2B SSO Settings
 
 - bash: |
+    b2bOrgAttributes="$(curl -Gs --fail-with-body \
+        -H "Authorization: Bearer $(b2bAccessToken)" \
+        https://api.us1.b2b-gigya.com/org-mgmt/schema/owner/$(b2bPartnersId) |
+      jq '.data.attributes | map(.key)')"
     jq -rc '.[] | ., .key' cdc/b2b/organization.attributes.json |
       while IFS=$ read -r json; read -r key; do
-        curl -sX PUT --fail-with-body \
-            -H "Authorization: Bearer $(b2bAccessToken)" \
-            -H "Content-Type: application/json" \
-            -d "$json" \
-            https://api.us1.b2b-gigya.com/org-mgmt/schema/$(b2bSchemaId)/attribute/$key
+        if [ ! "$(echo "$b2bOrgAttributes" | jq -rc --arg key "$key" 'map(select(. == $key)) | if length > 0 then .[0] else "" end')" ]; then
+          curl -s --fail-with-body \
+              -H "Authorization: Bearer $(b2bAccessToken)" \
+              -H "Content-Type: application/json" \
+              -d "$json" \
+              https://api.us1.b2b-gigya.com/org-mgmt/schema/$(b2bSchemaId)/attribute
+        else
+          curl -sX PUT --fail-with-body \
+              -H "Authorization: Bearer $(b2bAccessToken)" \
+              -H "Content-Type: application/json" \
+              -d "$json" \
+              https://api.us1.b2b-gigya.com/org-mgmt/schema/$(b2bSchemaId)/attribute/$key
+        fi
         echo
       done
   name: WriteB2BOrganizationAttributes
@@ -301,6 +367,13 @@ steps:
   displayName: Write B2B Email Templates
 
 - bash: |
+    parentApiKey=$(jq -rc '.[0] | .apiKey' apikeys.json)
+    sites="$(curl -s --fail-with-body \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d targetPartnerID=$(cdcPartnerId) \
+        -d httpStatusCodes=true \
+        https://admin.$(cdcDC)/admin.getPartnerSites)"
     sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" cdc/sites.json
     jq -rc '.[] | .name, .apiKey' apikeys.json |
       while IFS=$ read -r site; read -r apikey; do
@@ -308,9 +381,11 @@ steps:
             -d apiKey=$apikey \
             --data-urlencode userKey=$(cdcAppKey) \
             --data-urlencode secret=$(cdcAppSecret) \
-            "$(jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .validDomains.login | map(. | select(.|test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d '\''trustedSiteURLs="+.+"'\''") else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end' cdc/sites.json)" \
+            -d siteGroupOwner=$parentApiKey \
+            --data-urlencode siteGroupConfig="{\"enableSSO\": $(jq -rc '.[] | select(.name == "'$site'") | .group.ssoEnabled' cdc/sites.json)}" \
+            "$(echo "$sites" | jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .validDomains.login | map(select(test("^(\\*\\.)?[^.]*\\.[^.]*\\/\\*$"))) | if length > 0 then (tostring | "-d trustedSiteURLs="+@uri) else "" end' cdc/sites.json)" '.sites[] | select(.apiKey == "'$apikey'") | . as $p | if (.validDomains.login | length) == 2 and (.validDomains.login | index($p.name+"/*")) and (.validDomains.login | index("*."+$p.name+"/*")) then $rtu else "" end' | sed -e 's/ //')" \
             "$(jq -rc '.[] | select(.name == "'$site'") | .cnames.apiDomainPrefix | if . then "-d gigyaSettings={\"enableSSLForCNAME\": true, \"customAPIDomainPrefix\": \""+.+"\"}" else "" end' cdc/sites.json | sed -e 's/ //')" \
-            "$(jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end' cdc/sites.json)" \
+            "$(jq -rc --arg rtu "$(jq -rc '.[] | select(.name == "'$site'") | .recaptchaV2 | if .siteKey then "-d recaptchaV2={\"secret\": \""+.secret+"\", \"siteKey\": \""+.siteKey+"\"}" else "" end' cdc/sites.json)" '.[] | select(.apiKey == "'$apikey'") | . as $p | if .recaptchaV2.siteKey then "" else $rtu end' cdc/sites.json | sed -e 's/ //')" \
             "$(jq -rc '.[] | select(.name == "'$site'") | .globalConf | if . then . else "" end  | if . then "-d globalConf="+. else "" end' cdc/sites.json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" | perl -0777pe 's/ //')" \
             -d httpStatusCodes=true \
             https://admin.$(cdcDC)/admin.setSiteConfig         
