@@ -411,7 +411,7 @@ steps:
           -d scope=all \
           -d httpStatusCodes=true \
           https://idx.$(cdcDC)/idx.getGlobalVariables |
-        jq '.data' |
+        jq '.data | sort_by(.name)' |
         sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
         > "cdc/$site/dataflows/globalVariables.json"
     done        
@@ -451,7 +451,7 @@ steps:
           -d query='select * from scheduling' \
           -d httpStatusCodes=true \
           https://idx.$(cdcDC)/idx.search |              
-        jq '.result // [] | map(del(.jobId, .nextJobStartTime, .updateTime)) | sort_by(.id)' | 
+        jq '.result // [] | map(del(.jobId, .updateTime)) | sort_by(.id)' | 
         sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+(.n | sub("&";"\\&"))+"}}/g") | join(";")')" \
         > "cdc/$site/dataflows/scheduling.json"
     done
