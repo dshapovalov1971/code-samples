@@ -583,21 +583,20 @@ steps:
             -d httpStatusCodes=true \
             https://idx.$(cdcDC)/idx.search |
           jq '.result // [] | map({name, id})')"
-        jq -rc --arg df "$dataflows" '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/dataflows.json |
-          while IFS=$ read -r ss; do
-            dfname=$(echo "$ss" | jq -rc '.name')
-            op=$(echo "$dataflows" | jq -rc --arg name "$dfname" 'map(select(.name == $name)) | if length > 0 then "set" else "create" end')
-            resp=$(curl -s --fail-with-body \
-                -d apiKey=$apikey \
-                --data-urlencode userKey=$(cdcAppKey) \
-                --data-urlencode secret=$(cdcAppSecret) \
-                --data-urlencode data="$(echo "$ss" | jq -rc --arg id $(echo "$dataflows" | jq -rc --arg name "$dfname" 'map(select(.name == $name)) | if length>0 then .[0].id else "noop" end') 'if $id != "noop" then (.id=$id) else del(.id) end')" \
-                -d httpStatusCodes=false \
-                https://idx.$(cdcDC)/idx."$op"Dataflow)
-            echo "$resp" | jq '.'
-            [[ "$(echo $resp | jq -rc '.errorCode')" =~ ^(0|403200)$ ]] || exit 22
-            if [ "$op" == "create" ]; then dataflows=$(echo "$dataflows" | jq --arg name "$dfname" --arg id "$(echo "$resp" | jq -rc '.id')" '.+=[{"id":$id,"name":$name}]'); fi
-          done
+        while IFS=$ read -r ss; do
+          dfname=$(echo "$ss" | jq -rc '.name')
+          op=$(echo "$dataflows" | jq -rc --arg name "$dfname" 'map(select(.name == $name)) | if length > 0 then "set" else "create" end')
+          resp=$(curl -s --fail-with-body \
+              -d apiKey=$apikey \
+              --data-urlencode userKey=$(cdcAppKey) \
+              --data-urlencode secret=$(cdcAppSecret) \
+              --data-urlencode data="$(echo "$ss" | jq -rc --arg id $(echo "$dataflows" | jq -rc --arg name "$dfname" 'map(select(.name == $name)) | if length>0 then .[0].id else "noop" end') 'if $id != "noop" then (.id=$id) else del(.id) end')" \
+              -d httpStatusCodes=false \
+              https://idx.$(cdcDC)/idx."$op"Dataflow)
+          echo "$resp" | jq '.'
+          [[ "$(echo $resp | jq -rc '.errorCode')" =~ ^(0|403200)$ ]] || exit 22
+          if [ "$op" == "create" ]; then dataflows=$(echo "$dataflows" | jq --arg name "$dfname" --arg id "$(echo "$resp" | jq -rc '.id')" '.+=[{"id":$id,"name":$name}]'); fi
+        done < <(jq -rc '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/dataflows.json)
     # Write IDX Scheduling
         schedules="$(curl -s --fail-with-body \
             -d apiKey=$apikey \
@@ -608,13 +607,16 @@ steps:
             https://idx.$(cdcDC)/idx.search |              
           jq '.result // [] | map({name, id, dataflowName})')"
         sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="$(Build.SourceBranchName)") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" cdc/$site/dataflows/scheduling.json
-        jq -rc --arg df "$schedules" '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/scheduling.json |
+        jq -rc '.[] | del(.apiKey, .siteId)' cdc/$site/dataflows/scheduling.json |
           while IFS=$ read -r ss; do
             curl -s --fail-with-body \
                 -d apiKey=$apikey \
                 --data-urlencode userKey=$(cdcAppKey) \
                 --data-urlencode secret=$(cdcAppSecret) \
-                --data-urlencode data="$(echo "$ss" | jq -rc --arg dataflowId "$(echo "$dataflows" | jq -rc --arg dataflowName "$(echo "$ss" | jq -rc '.dataflowName')" 'map(select(.name == $dataflowName))[0].id')" --arg id $(echo "$schedules" | jq -rc --arg name "$(echo "$ss" | jq -rc '.name')" 'map(select(.name == $name)) | if length>0 then .[0].id else "noop" end') 'if $id != "noop" then (.id=$id) else del(.id) end | .dataflowId=$dataflowId')" \
+                --data-urlencode data="$(echo "$ss" | jq -rc \
+                  --arg dataflowId "$(echo "$dataflows" | jq -rc --arg dataflowName "$(echo "$ss" | jq -rc '.dataflowName')" 'map(select(.name == $dataflowName))[0].id')" \
+                  --arg id $(echo "$schedules" | jq -rc --arg name "$(echo "$ss" | jq -rc '.name')" 'map(select(.name == $name)) | if length>0 then .[0].id else "noop" end') \
+                  'if $id != "noop" then (.id=$id) else del(.id) end | .dataflowId=$dataflowId | (.nextJobStartTime[:19]+"Z" | fromdate) as $njst | .frequencyInterval as $fi | .nextJobStartTime = ((now - $njst) as $diff | if .frequencyType == "day" and $diff > 0 then $diff / 86400 / $fi | (floor + 1) * 86400 * $fi + $njst | todate else .nextJobStartTime end)')" \
                 -d httpStatusCodes=true \
                 https://idx.$(cdcDC)/idx.$(echo "$schedules" | jq -rc --argjson df "$(echo "$ss" | jq -rc '{name, dataflowName}')" 'map(select(.name == $df.name and .dataflowName == $df.dataflowName)) | if length > 0 then "set" else "create" end')Scheduling
           done
