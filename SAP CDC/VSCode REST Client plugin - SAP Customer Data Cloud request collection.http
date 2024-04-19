@@ -9,7 +9,7 @@ POST https://accounts.us1.gigya.com/accounts.sso.setConfig
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-url=https://dev.app.timken.com/ciam/login
+url=https://dev.app.test.com/ciam/login
 &childSiteOverrides=[]
 &httpStatusCodes=true
 
