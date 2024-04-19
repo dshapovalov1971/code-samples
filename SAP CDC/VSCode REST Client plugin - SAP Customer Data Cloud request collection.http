@@ -1,15 +1,26 @@
-@cdc-api-key = 3_hXJvDx1eFcp8VgSUBw77h4hFrfV6er
+@cdc-api-key = 4_l12_raLFWp-5ZM-zEIfspA
 @cdc-dc = {{cdc-dc-us}}
 
-# @name groups_search
-POST https://accounts.{{cdc-dc}}/accounts.groups.search
+###
+
+POST https://accounts.us1.gigya.com/accounts.sso.setConfig
     ?apiKey={{cdc-api-key}}
     &userKey={{cdc-user-key}}
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-query=select * from groups where groupId contains "662692"
-&model=ClinicModel
+url=https://dev.app.timken.com/ciam/login
+&childSiteOverrides=[]
+&httpStatusCodes=true
+
+###
+
+# @name groups_setGroupInfo
+POST https://accounts.{{cdc-dc}}/accounts.b2b.enableForSite
+    ?apiKey={{cdc-api-key}}
+    &userKey={{cdc-user-key}}
+    &secret={{cdc-user-secret}}
+Content-Type: application/x-www-form-urlencoded
 
 ###
 
@@ -79,766 +90,7 @@ POST https://accounts.{{cdc-dc}}/accounts.rba.setPolicy
     &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-policy={
-    "commonRules": [
-      {
-        "action": {
-          "authLevel": 0,
-          "challenge": "none",
-          "type": "allow"
-        },
-        "rootFactor": {
-          "type": "IP",
-          "ranges": [
-            "192.168.0.1/24",
-            "192.168.1.1/25"
-          ],
-          "inclusive": true
-        },
-        "id": "allow IPs",
-        "scope": "Login",
-        "description": null,
-        "enabled": false
-      },
-      {
-        "action": {
-          "duration": 300,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "failedLogins",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 25,
-              "resetInterval": 300
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_cq8gb4Hf8GGuakl"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": "On multiple failed login attempts > lockout IP (GPD - Neulion / ES)",
-        "enabled": false
-      },
-      {
-        "action": {
-          "duration": 300,
-          "scope": [
-            "account"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "type": "failedLogins",
-          "scope": [
-            "account"
-          ],
-          "threshold": 10,
-          "resetInterval": 300
-        },
-        "id": null,
-        "scope": "Login",
-        "description": " On multiple failed login attempts > lockout account",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 3600,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 450,
-              "ratio": 0.99,
-              "resetInterval": 900
-            },
-            {
-              "type": "IP",
-              "ranges": [
-                "204.141.128.0/24",
-                "204.141.158.0/24"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr",
-                "3_QElaX5W_8GVqhaxPT"
-              ],
-              "inclusive": false
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": "On X percentage of failed login attempts > lockout IP (ALL except: Intel, Patron)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 300,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "failedLogins",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 250,
-              "resetInterval": 300
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr7s",
-                "3_QElaX5W_8GVqhaxPTDu"
-              ],
-              "inclusive": false
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": " On multiple failed login attempts > lockout IP (ALL except: Intel, Patron)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 300,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "failedLogins",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 250,
-              "resetInterval": 300
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr7sGTc"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": " On multiple failed login attempts > lockout IP (Intel)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 3600,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 450,
-              "ratio": 0.99,
-              "resetInterval": 900
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_vKnJn-q2bLxCkMABr"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": "On X percentage of failed login attempts > lockout IP (Intel)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 86400,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 50,
-              "ratio": 0.9,
-              "resetInterval": 300
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqc"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": "On X percentage of failed login attempts > lockout IP (GPI - D3)",
-        "enabled": false
-      },
-      {
-        "action": {
-          "duration": 86400,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 50,
-              "ratio": 0.9,
-              "resetInterval": 300
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_cq8gb4Hf8GGuakl_33Nv"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": "On X percentage of failed login attempts > lockout IP (GPD - Neulion / ES)",
-        "enabled": false
-      },
-      {
-        "action": {
-          "duration": 300,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "failedLogins",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 250,
-              "resetInterval": 300
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_QElaX5W_8GVqhaxPTDuTwj"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": " On multiple failed login attempts > lockout IP (Patron)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 3600,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 450,
-              "ratio": 0.99,
-              "resetInterval": 900
-            },
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_QElaX5W_8GVqhaxPTDuTwjgXaz"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": null,
-        "scope": "Login",
-        "description": "On X percentage of failed login attempts > lockout IP (Patron)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "scope": [
-            "account"
-          ],
-          "type": "captcha"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "highRisk",
-              "scope": [
-                "IP",
-                "account"
-              ],
-              "threshold": 0.8
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCe"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": "High Risk",
-        "scope": "Login",
-        "description": "On high risk score > Force CAPTCHA on account",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 602,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "failedLogins",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 12,
-              "resetInterval": 300
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": "On multiple failed login attempts > lockout IP (GPI - D3)",
-        "scope": "Login",
-        "description": "On multiple failed login attempts > lockout IP (GPI - D3)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 602,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "IP",
-              "ranges": [
-	        "192.168.0.1/24",
-	        "192.168.1.1/25"
-              ],
-              "inclusive": false
-            },
-            {
-              "type": "failedLogins",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 12,
-              "resetInterval": 1800
-            }
-          ],
-          "type": "all"
-        },
-        "id": "Multiple Failed Login Attempts > Lockout IP (NFL ALL)",
-        "scope": "Login",
-        "description": "On multiple failed login attempts > lockout IP (NFL All)",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 600,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "highRisk",
-              "scope": [
-                "IP",
-                "account"
-              ],
-              "threshold": 0.8
-            },
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M7"
-              ],
-              "inclusive": true
-            }
-          ],
-          "type": "all"
-        },
-        "id": "HIGH RISK (IP Block Variant)",
-        "scope": "Login",
-        "description": "",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 300,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M7",
-                "3_JuHa5qkVIfY_KsNk1TuudSQ"
-              ],
-              "inclusive": true
-            },
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 10,
-              "ratio": 0.9,
-              "resetInterval": 300
-            }
-          ],
-          "type": "all"
-        },
-        "id": "SAP Monitoring Automatic IP Lockout - 5 minutes",
-        "scope": "Login",
-        "description": "on 90 percent failure rate of min 10 login attempts",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 900,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5N"
-              ],
-              "inclusive": true
-            },
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 50,
-              "ratio": 0.9,
-              "resetInterval": 900
-            }
-          ],
-          "type": "all"
-        },
-        "id": "SAP Monitoring Automatic IP Lockout - 15 minutes",
-        "scope": "Login",
-        "description": "on 90 percent failure rate of min 50 login attempts",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 3600,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5N"
-              ],
-              "inclusive": true
-            },
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 100,
-              "ratio": 0.95,
-              "resetInterval": 3600
-            }
-          ],
-          "type": "all"
-        },
-        "id": "SAP Monitoring Automatic IP Lockout - 1 hour",
-        "scope": "Login",
-        "description": "on 95 percent failure rate of min 100 login attempts.",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 10800,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71QN",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5N"
-              ],
-              "inclusive": true
-            },
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 500,
-              "ratio": 0.95,
-              "resetInterval": 10800
-            }
-          ],
-          "type": "all"
-        },
-        "id": "SAP Monitoring Automatic IP Lockout - 3 hours",
-        "scope": "Login",
-        "description": "on 95 percent failure rate of min 500 login attempts.",
-        "enabled": true
-      },
-      {
-        "action": {
-          "duration": 86400,
-          "scope": [
-            "IP"
-          ],
-          "type": "lockout"
-        },
-        "rootFactor": {
-          "factors": [
-            {
-              "type": "apiKey",
-              "apiKeys": [
-                "3_EH6cZ6gBJgl94hXqcCex1M71Q",
-                "3_JuHa5qkVIfY_KsNk1TuudSQT5"
-              ],
-              "inclusive": true
-            },
-            {
-              "type": "IPRatio",
-              "scope": [
-                "IP"
-              ],
-              "threshold": 1000,
-              "ratio": 0.99,
-              "resetInterval": 86400
-            }
-          ],
-          "type": "all"
-        },
-        "id": "SAP Monitoring Automatic IP Lockout - 1 day",
-        "scope": "Login",
-        "description": "on 99 percent failure rate of min 1000 login attempts.",
-        "enabled": true
-      }
-    ],
-    "rulesSets": [
-      {
-        "rules": [],
-        "id": "_off",
-        "description": "This policy represents a policy without any validations",
-        "enabled": true
-      }
-    ],
-    "tfaRegistrationScope": false,
-    "defaultPolicy": "_off",
-    "allowOverrideMode": "no"
-  }
-
-###
-
-# @name reports_getAccountsStats
-POST https://audit.{{cdc-dc}}/reports.getAccountsStats
-    ?apiKey={{cdc-api-key}}
-    &userKey={{cdc-user-key}}
-    &secret={{cdc-user-secret}}
-Content-Type: application/x-www-form-urlencoded
-
-startDate=2022-06-01
-&endDate=2023-01-01
-&dimensions=date
-&measures=siteLogins
+policy={}
 
 ###
 
@@ -1201,11 +453,11 @@ passwordReset={
 # @name OTP_sendCode
 POST https://accounts.{{cdc-dc}}/accounts.otp.sendCode
     ?apiKey={{cdc-api-key}}
-    &userKey={{cdc-app-key}}
-    &secret={{cdc-app-secret}}
+    &userKey={{cdc-user-key}}
+    &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
-email=abc.test@mailinator.com
+email=abc.test@mailinator.com.234234234
 &lang=en
 &sendCode=true
 
@@ -1214,33 +466,13 @@ email=abc.test@mailinator.com
 # @name OTP_update
 POST https://accounts.{{cdc-dc}}/accounts.otp.update
     ?apiKey={{cdc-api-key}}
-    &userKey={{cdc-app-key}}
-    &secret={{cdc-app-secret}}
+    &userKey={{cdc-user-key}}
+    &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
 vToken={{OTP_sendCode.response.body.vToken}}
 &code={{OTP_sendCode.response.body.code}}
 &UID=fb06209c01524c
-
-###
-
-POST https://api.us1.b2b-gigya.com/runtime/4_kvKC1tmA3Dq4Jy2qZB6uew/authorization/token/PQEPZ9AWHX
-Content-Type: application/json
-Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhb01aSUFkcWx5U0JLb0cwS
-
-{
-  "identity": {
-    "id": "ed1c8a55665f"
-  },
-  "context": {
-    "organization": "035abb41-792c"
-  },
-  "response": {
-    "include_identity": false,
-    "include_reasons": false,
-    "include_business_models": true
-  }
-}
 
 ###
 
@@ -1372,8 +604,8 @@ loginID=dmitry.shapovalov@sap.com
 # @name register
 POST https://accounts.{{cdc-dc}}/accounts.register
     ?apiKey={{cdc-api-key}}
-    &userKey={{cdc-app-key}}
-    &secret={{cdc-app-secret}}
+    &userKey={{cdc-user-key}}
+    &secret={{cdc-user-secret}}
 Content-Type: application/x-www-form-urlencoded
 
 email=abc.test@mailinator.com
@@ -1484,18 +716,6 @@ gigyaAssertion={{tfa_initTFA.response.body.gigyaAssertion}}
 
 ###
 
-# @name notifyLogin
-POST https://accounts.{{cdc-dc}}/accounts.notifyLogin
-    ?apiKey={{cdc-api-key}}
-    &userKey={{cdc-user-key}}
-    &secret={{cdc-user-secret}}
-Content-Type: application/x-www-form-urlencoded
-
-siteUID=7a95c29726a94e
-&sessionExpiration=8640000
-
-###
-
 # @name getAccountInfo
 POST https://accounts.{{cdc-dc}}/accounts.getAccountInfo
     ?apiKey={{cdc-api-key}}
@@ -1528,6 +748,34 @@ POST https://accounts.{{cdc-dc}}/accounts.resetPassword
 Content-Type: application/x-www-form-urlencoded
 
 loginID=test@test.com
+
+###
+
+# @name idx_getRestrictions
+POST https://idx.{{cdc-dc}}/idx.getRestrictions
+    ?apiKey={{cdc-api-key}}
+    &userKey={{cdc-user-key}}
+    &secret={{cdc-user-secret}}
+Content-Type: application/x-www-form-urlencoded
+
+###
+
+# @name idx_setRestrictions
+POST https://idx.{{cdc-dc}}/idx.setRestrictions
+    ?apiKey={{cdc-api-key}}
+    &userKey={{cdc-user-key}}
+    &secret={{cdc-user-secret}}
+Content-Type: application/x-www-form-urlencoded
+
+data={
+    "maxAllowedDataflow": 25,
+    "minFrequency": 600,
+    "fullExtractMinFrequency": 86400,
+    "maxAllowedFullExtract": 10,
+    "maxAllowedScheduling": 25,
+    "maxAllowedDataflowVersions": 20,
+    "maxAllowedDataflowDraftVersions": 20
+}
 
 ###
 
