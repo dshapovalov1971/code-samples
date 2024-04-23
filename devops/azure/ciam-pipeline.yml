@@ -8,9 +8,7 @@ variables:
 trigger:
   branches:
     include:
-    - dev
-    - qa
-    - prd
+    - '*'
   paths:
     include:
     - ciam.bicep
@@ -20,6 +18,7 @@ trigger:
     - email-header.html
     - email-footer.html
     - replacements
+    - logic-app
 
 pool:
   vmImage: ubuntu-latest
@@ -46,7 +45,7 @@ steps:
     scriptLocation: inlineScript
     failOnStandardError: true
     inlineScript: |
-      sed -i -e "$(az provider list --query '[].{namespace: namespace,resourceTypes: resourceTypes[].{resourceType: resourceType, apiVersion: defaultApiVersion || (apiVersions[] | [?length(@)==`10`] | [0])}}' |
+      sed -i -e "$(az provider list --query '[].{namespace: namespace,resourceTypes: resourceTypes[].{resourceType: resourceType, apiVersion: apiVersions[] | [?length(@)==`10`] | [0]}}' |
         jq -rc --slurpfile v <(grep -Po "resource .+? '[^']+?'" $(templateFile) | grep -Po "(?<=').*(?=')" | sed -e 's/^/{"o":"/g;s/$/"}/g') \
           '. as $rv | $v | unique | map(.r = (.o | split("/")[0] as $ns | (split("@")[0] | split("/")[1:] | join("/")) as $rt | $ns + "/" + $rt + "@" + ($rv[] | select(.namespace == $ns).resourceTypes[] | select(.resourceType == $rt).apiVersion)) | select(.r != .o)) | map("s|"+.o+"|"+.r+"|g") | join(";")')" $(templateFile)
 
@@ -62,8 +61,16 @@ steps:
   name: CommitChanges
   displayName: Commit Changes
 
-- script: |
+- bash: |
     az bicep build --file $(templateFile)
+    parentSite=$(cat cdc/parentSite)
+    echo "##vso[task.setvariable variable=cdcApiKey]$(curl -s --fail-with-body \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d targetPartnerID=$(cdcPartnerId) \
+        -d httpStatusCodes=true \
+        https://admin.$(cdcDC)/admin.getPartnerSites |
+      jq -rc '.sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$(Build.SourceBranchName)} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey')"
   name: LintBicepCode
   displayName: Run Bicep Linter
 
@@ -76,8 +83,7 @@ steps:
     scriptLocation: 'inlineScript'
     failOnStandardError: true
     inlineScript: |
-      az deployment group validate --resource-group $(ciamResourceGroupName) \
-        -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret)
+      az deployment group validate -g $(ciamResourceGroupName) -f $(templateFile) --only-show-errors
 
 - task: AzureCLI@2
   name: Deploy
@@ -89,8 +95,10 @@ steps:
     failOnStandardError: true
     inlineScript: |
       sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" $(templateFile)
-      az deployment group create --name $(Build.BuildNumber)  --resource-group $(ciamResourceGroupName) \
-        -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret)
+      az deployment group create -n $(Build.BuildNumber)  -g $(ciamResourceGroupName) -f $(templateFile) --only-show-errors
+      (cd logic-app; zip -r ../deploy.zip *)
+      lapp="$(echo $(ciamResourceGroupName) | sed 's/RG/LApp/; s/[^-]*$/LogicApp/')"
+      az logicapp deployment source config-zip -g "$(ciamResourceGroupName)" -n "$lapp" --src deploy.zip --only-show-errors
 
 - task: AzureCLI@2
   name: WriteAppConfig
@@ -119,3 +127,21 @@ steps:
       az storage blob upload-batch --account-name $(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/') \
         -d emailtemplates -s ./emailtemplates --overwrite --no-progress --only-show-errors
 
+- task: AzureCLI@2
+  name: SetEmailUrlCdcVariable
+  displayName: Set Email URL CDC Variable
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    failOnStandardError: true
+    inlineScript: |
+      curl -s --fail-with-body \
+          -d apiKey=$(cdcApiKey) \
+          --data-urlencode userKey=$(cdcAppKey) \
+          --data-urlencode secret=$(cdcAppSecret) \
+          -d name=sendEmailURL \
+          -d type=string \
+          --data-urlencode value="$(az rest --query "value" -otsv --method post --uri https://management.azure.com/subscriptions/$(az account show --query "id" -otsv)/resourceGroups/$(ciamResourceGroupName)/providers/Microsoft.Web/sites/$(echo $(ciamResourceGroupName) | sed 's/RG/LApp/; s/[^-]*$/LogicApp/')/hostruntime/runtime/webhooks/workflow/api/management/workflows/EmailNotification/triggers/manual/listCallbackUrl?api-version=2018-11-01)" \
+          -d httpStatusCodes=true \
+          https://idx.$(cdcDC)/idx.setGlobalVariable 
