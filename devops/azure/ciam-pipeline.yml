@@ -94,7 +94,7 @@ steps:
     scriptLocation: 'inlineScript'
     failOnStandardError: true
     inlineScript: |
-      sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" $(templateFile)
+      find "logic-app" -name workflow.json -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" {} \;
       az deployment group create -n $(Build.BuildNumber)  -g $(ciamResourceGroupName) -f $(templateFile) --only-show-errors
       (cd logic-app; zip -r ../deploy.zip *)
       lapp="$(echo $(ciamResourceGroupName) | sed 's/RG/LApp/; s/[^-]*$/LogicApp/')"
