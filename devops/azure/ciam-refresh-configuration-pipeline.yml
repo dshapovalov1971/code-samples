@@ -89,7 +89,7 @@ steps:
       mkdir -p "logic-app"
       az storage file download-batch --account-name $(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/') \
         -s "logic-app-standard/site/wwwroot" -d "logic-app" --only-show-errors --no-progress
-      cat "logic-app/EmailNotification/workflow.json"
+      find "logic-app" -name workflow.json -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+.n+"}}/g") | join(";")')" {} \;
 
 - bash: |
     if [[ `git status --porcelain` ]]; then
