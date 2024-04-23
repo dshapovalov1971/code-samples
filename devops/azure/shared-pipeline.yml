@@ -8,9 +8,7 @@ variables:
 trigger:
   branches:
     include:
-    - dev
-    - qa
-    - prd 
+    - '*'
   paths:
     include:
     - shared.bicep
@@ -39,8 +37,9 @@ steps:
     azureSubscription: $(sharedServiceConnection)
     scriptType: bash
     scriptLocation: inlineScript
+    failOnStandardError: true
     inlineScript: |
-      sed -i -e "$(az provider list --query '[].{namespace:namespace,resourceTypes:resourceTypes[].{resourceType:resourceType,apiVersion:apiVersions[] | [?length(@)==`10`] | [0]}}' |
+      sed -i -e "$(az provider list --query '[].{namespace: namespace,resourceTypes: resourceTypes[].{resourceType: resourceType, apiVersion: apiVersions[] | [?length(@)==`10`] | [0]}}' |
         jq -rc --slurpfile v <(grep -Po "resource .+? '[^']+?'" $(templateFile) | grep -Po "(?<=').*(?=')" | sed -e 's/^/{"o":"/g;s/$/"}/g') \
           '. as $rv | $v | unique | map(.r = (.o | split("/")[0] as $ns | (split("@")[0] | split("/")[1:] | join("/")) as $rt | $ns + "/" + $rt + "@" + ($rv[] | select(.namespace == $ns).resourceTypes[] | select(.resourceType == $rt).apiVersion)) | select(.r != .o)) | map("s|"+.o+"|"+.r+"|g") | join(";")')" $(templateFile)
 
@@ -58,6 +57,14 @@ steps:
 
 - script: |
     az bicep build --file $(templateFile)
+    parentSite=$(cat cdc/parentSite)
+    echo "##vso[task.setvariable variable=cdcApiKey]$(curl -s --fail-with-body \
+        --data-urlencode userKey=$(cdcAppKey) \
+        --data-urlencode secret=$(cdcAppSecret) \
+        -d targetPartnerID=$(cdcPartnerId) \
+        -d httpStatusCodes=true \
+        https://admin.$(cdcDC)/admin.getPartnerSites |
+      jq -rc '.sites[] | select(.name == "'$(echo ${parentSite/"{{env}}"/$(Build.SourceBranchName)} | jq -Rr --slurpfile dict cdc/siteNameOverrides 'INDEX($dict[]; .o) as $d | ($d[.]|.r) // . ')'").apiKey')"
   name: LintBicepCode
   displayName: Run Bicep Linter
 
@@ -68,8 +75,9 @@ steps:
     azureSubscription: $(sharedServiceConnection)
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
+    failOnStandardError: true
     inlineScript: |
-      az deployment group validate --resource-group $(sharedResourceGroupName) \
+      az deployment group validate --only-show-errors -g $(sharedResourceGroupName) \
         -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret) marketingSubscriptionId=$(marketingSubscriptionId) frontdoorApiUrl=$(frontdoorApiUrl)
         
 - task: AzureCLI@2
@@ -79,6 +87,7 @@ steps:
     azureSubscription: $(sharedServiceConnection)
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
+    failOnStandardError: true
     inlineScript: |
-      az deployment group create --name $(Build.BuildNumber)  --resource-group $(sharedResourceGroupName) \
+      az deployment group create --name $(Build.BuildNumber) --only-show-errors -g $(sharedResourceGroupName) \
         -f $(templateFile) --parameters cdcApiKey=$(cdcApiKey) cdcDC=$(cdcDC) cdcAppKey=$(cdcAppKey) cdcAppSecret=$(cdcAppSecret) marketingSubscriptionId=$(marketingSubscriptionId) frontdoorApiUrl=$(frontdoorApiUrl)
