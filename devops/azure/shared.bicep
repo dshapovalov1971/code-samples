@@ -13,9 +13,9 @@ var nameStructure = split(resourceGroup().name, '-')
 var resourcePrefix = '${nameStructure[0]}-${nameStructure[1]}'
 var env = nameStructure[3]
 
-resource approvalWorkflow 'Microsoft.Logic/workflows@2019-05-01' existing = {
-  name: '${resourcePrefix}-LApp-${env}-ApprovalWorkflow'
-  scope: resourceGroup('${marketingSubscriptionId}', '${resourcePrefix}-RG-${env}-SAPCDCCIAM')
+resource approvalWorkflow 'Microsoft.Web/sites@2023-12-01' existing = {
+  name: '${resourcePrefix}-LApp-${env}-LogicApp'
+  scope: resourceGroup(marketingSubscriptionId, '${resourcePrefix}-RG-${env}-SAPCDCCIAM')
 }
 
 resource tag 'Microsoft.Resources/tags@2023-07-01' = {
@@ -27,7 +27,7 @@ resource tag 'Microsoft.Resources/tags@2023-07-01' = {
   }
 }
 
-resource apiManagementInstance 'Microsoft.ApiManagement/service@2021-08-01' = {
+resource apiManagementInstance 'Microsoft.ApiManagement/service@2022-08-01' = {
   name: '${resourcePrefix}-APIM-${env}-SharedApim'
   location: location
   sku: {
@@ -135,7 +135,7 @@ resource approvalWorkflowPostPolicies 'Microsoft.ApiManagement/service/apis/oper
   name: 'policy'
   properties: {
     format: 'rawxml'
-    value: '<policies><inbound><base /><validate-jwt token-value="@((string)context.Request.Body.As<JObject>(true)["jws"])" failed-validation-httpcode="401" require-expiration-time="false" require-signed-tokens="true"><openid-config url="https://${frontdoorApiUrl}/${jwksAPI.properties.path}${jwksGet.properties.urlTemplate}" /></validate-jwt><set-body>@{string epl = ((string)context.Request.Body.As<JObject>()["jws"]).Split(\'.\')[1].Replace(\'-\', \'+\').Replace(\'_\', \'/\');return Encoding.UTF8.GetString(Convert.FromBase64String(epl.PadRight(epl.Length + (4 - epl.Length % 4) % 4, \'=\')));}</set-body><set-backend-service id="apim-generated-policy" base-url="${approvalWorkflow.properties.accessEndpoint}/triggers" /><set-method id="apim-generated-policy">POST</set-method><rewrite-uri id="apim-generated-policy" template="${replace(replace(listCallbackURL('${approvalWorkflow.id}/triggers/manual', '2019-05-01').value, '${approvalWorkflow.properties.accessEndpoint}/triggers', ''), '&', '&amp;')}" /><set-header id="apim-generated-policy" name="Ocp-Apim-Subscription-Key" exists-action="delete" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
+    value: '<policies><inbound><base /><validate-jwt token-value="@((string)context.Request.Body.As<JObject>(true)["jws"])" failed-validation-httpcode="401" require-expiration-time="false" require-signed-tokens="true"><openid-config url="https://${frontdoorApiUrl}/${jwksAPI.properties.path}${jwksGet.properties.urlTemplate}" /></validate-jwt><set-body>@{string epl = ((string)context.Request.Body.As<JObject>()["jws"]).Split(\'.\')[1].Replace(\'-\', \'+\').Replace(\'_\', \'/\');return Encoding.UTF8.GetString(Convert.FromBase64String(epl.PadRight(epl.Length + (4 - epl.Length % 4) % 4, \'=\')));}</set-body><set-backend-service id="apim-generated-policy" base-url="https://${approvalWorkflow.properties.hostNames[0]}/api" /><set-method id="apim-generated-policy">POST</set-method><rewrite-uri id="apim-generated-policy" template="${replace(replace(listCallbackUrl(resourceId(marketingSubscriptionId, '${resourcePrefix}-RG-${env}-SAPCDCCIAM', 'Microsoft.Web/sites/hostruntime/webhooks/api/workflows/triggers', approvalWorkflow.name, 'runtime', 'workflow', 'management', 'ApprovalWorkflow', 'manual'),'2021-03-01').value, 'https://${approvalWorkflow.properties.hostNames[0]}:443/api', ''), '&', '&amp;')}" /><set-header id="apim-generated-policy" name="Ocp-Apim-Subscription-Key" exists-action="delete" /></inbound><backend><base /></backend><outbound><base /></outbound><on-error><base /></on-error></policies>'
   }
 }
 
