@@ -94,11 +94,10 @@ steps:
     scriptLocation: 'inlineScript'
     failOnStandardError: true
     inlineScript: |
-      find "logic-app" -name workflow.json -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" {} \;
       az deployment group create -n $(Build.BuildNumber)  -g $(ciamResourceGroupName) -f $(templateFile) --only-show-errors
+      find "logic-app" -name workflow.json -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" {} \;
       (cd logic-app; zip -r ../deploy.zip *)
-      lapp="$(echo $(ciamResourceGroupName) | sed 's/RG/LApp/; s/[^-]*$/LogicApp/')"
-      az logicapp deployment source config-zip -g "$(ciamResourceGroupName)" -n "$lapp" --src deploy.zip --only-show-errors
+      az logicapp deployment source config-zip -g "$(ciamResourceGroupName)" -n "$(echo $(ciamResourceGroupName) | sed 's/RG/LApp/; s/[^-]*$/LogicApp/')" --src deploy.zip --only-show-errors
 
 - task: AzureCLI@2
   name: WriteAppConfig
