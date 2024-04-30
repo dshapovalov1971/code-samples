@@ -89,6 +89,7 @@ steps:
       mkdir -p "logic-app"
       az storage file download-batch --account-name $(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/') \
         -s "logic-app-standard/site/wwwroot" -d "logic-app" --only-show-errors --no-progress
+      find "logic-app" -name "*-UnitTest" -type d | while read -r name; do rm -rf $name; done
       find "logic-app" -name workflow.json -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/"+(.r | sub("[[]";"\\[") | sub("[]]";"\\]"))+"/{{"+.n+"}}/g") | join(";")')" {} \;
 
 - bash: |
