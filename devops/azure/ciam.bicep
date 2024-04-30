@@ -92,6 +92,21 @@ resource logicAppOffice365Connector 'Microsoft.Web/connections@2016-06-01' = {
   }
 }
 
+resource logicAppOffice365ConnectorAccessPolicy 'Microsoft.Web/connections/accessPolicies@2016-06-01' = {
+  name: '${logicAppOffice365Connector.name}/${logicApp.name}-Access-Policy'
+  location: location
+  dependsOn: [logicAppOffice365Connector]
+  properties: {
+    principal: {
+      type: 'ActiveDirectory'
+      identity: {
+        objectId: logicApp.identity.principalId
+        tenantId: tenant().tenantId
+      }
+    }
+  }
+}
+
 resource logicAppOffice365UsersConnector 'Microsoft.Web/connections@2016-06-01' = {
   name: '${resourcePrefix}-APIC-${env}-office365users'
   location: location
@@ -99,6 +114,21 @@ resource logicAppOffice365UsersConnector 'Microsoft.Web/connections@2016-06-01' 
   properties: {
     api: {
       id: subscriptionResourceId('Microsoft.Web/locations/managedApis', location, 'office365users')
+    }
+  }
+}
+
+resource logicAppOffice365UsersConnectorAccessPolicy 'Microsoft.Web/connections/accessPolicies@2016-06-01' = {
+  name: '${logicAppOffice365UsersConnector.name}/${logicApp.name}-Access-Policy'
+  location: location
+  dependsOn: [logicAppOffice365UsersConnector]
+  properties: {
+    principal: {
+      type: 'ActiveDirectory'
+      identity: {
+        objectId: logicApp.identity.principalId
+        tenantId: tenant().tenantId
+      }
     }
   }
 }
@@ -122,6 +152,21 @@ resource logicAppKeyVaultConnector 'Microsoft.Web/connections@2016-06-01' = {
   })
 }
 
+resource logicAppKeyVaultConnectorAccessPolicy 'Microsoft.Web/connections/accessPolicies@2016-06-01' = {
+  name: '${logicAppKeyVaultConnector.name}/${logicApp.name}-Access-Policy'
+  location: location
+  dependsOn: [logicAppKeyVaultConnector]
+  properties: {
+    principal: {
+      type: 'ActiveDirectory'
+      identity: {
+        objectId: logicApp.identity.principalId
+        tenantId: tenant().tenantId
+      }
+    }
+  }
+}
+
 resource logicAppStorageConnector 'Microsoft.Web/connections@2016-06-01' = {
   name: '${resourcePrefix}-APIC-${env}-azureblob'
   location: location
@@ -134,6 +179,21 @@ resource logicAppStorageConnector 'Microsoft.Web/connections@2016-06-01' = {
       name: 'managedIdentityAuth'
     }
   })
+}
+
+resource logicAppStorageConnectorAccessPolicy 'Microsoft.Web/connections/accessPolicies@2016-06-01' = {
+  name: '${logicAppStorageConnector.name}/${logicApp.name}-Access-Policy'
+  location: location
+  dependsOn: [logicAppStorageConnector]
+  properties: {
+    principal: {
+      type: 'ActiveDirectory'
+      identity: {
+        objectId: logicApp.identity.principalId
+        tenantId: tenant().tenantId
+      }
+    }
+  }
 }
 
 resource roleAssignmentAppConfigurationDataReaderLogicApp 'Microsoft.Authorization/roleAssignments@2022-04-01' = {// App Configuration Data Reader
@@ -215,6 +275,8 @@ resource logicApp 'Microsoft.Web/sites@2023-12-01' = {
         {name: 'connKeyVaultApiId', value: logicAppKeyVaultConnector.properties.api.id}
         {name: 'connKeyVaultId', value: logicAppKeyVaultConnector.id}
         {name: 'connKeyVaultRuntimeUrl', value: logicAppKeyVaultConnector.properties.connectionRuntimeUrl}
+        {name: 'configStoreEndpoint', value: configStore.properties.endpoint}
+        {name: 'storageAccountName', value: storageAccount.name}
       ]
       use32BitWorkerProcess: false      
     }
