@@ -1,0 +1,115 @@
+variables:
+- group: ${{ variables['Build.SourceBranchName'] }}
+- name: templateFile
+  value: ciam.bicep
+- name: pipelineFile
+  value: ciam-pipeline.yml
+
+pool:
+  vmImage: ubuntu-latest
+
+trigger:
+  branches:
+    include:
+    - dev
+  paths:
+    include:
+    - test.yml
+    - tests
+
+steps:
+- checkout: self
+  persistCredentials: true
+
+- task: AzureCLI@2
+  name: UnitTestPreparation
+  displayName: Unit Test Preparation
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    scriptType: bash
+    scriptLocation: inlineScript
+    failOnStandardError: true
+    inlineScript: |
+      find "logic-app" -name workflow.json -type f -exec sed -i -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="'$(Build.SourceBranchName)'") | "s/{{"+.n+"}}/"+.r+"/g") | join(";")')" {} \;
+      find "logic-app" -type d -mindepth 1 | while read -r name; do
+        cp -r $name $name-UnitTest
+        perl -i -0777pe 's/"staticResultOptions": "Disabled"/"staticResultOptions": "Enabled"/g;s/,(\r|\n)+?\s+?"secureData": {(.|\n)+?}//g;s/(?<!,)(\r|\n)+?\s+?"secureData": {(.|\n)+?},//g;s/("host":(.|\n)+?"workflow":(.|\n)+?"id": "[^"]+)/$1-UnitTest/g' $name-UnitTest/workflow.json
+      done
+      (cd logic-app; zip -r ../deploy.zip *)
+      az logicapp deployment source config-zip -g "$(ciamResourceGroupName)" -n "$(echo $(ciamResourceGroupName) | sed 's/RG/LApp/; s/[^-]*$/LogicApp/')" --src deploy.zip --only-show-errors
+      find "logic-app" -name "*-UnitTest" -type d | while read -r name; do rm -rf $name; done
+      rm deploy.zip
+      git restore .
+
+- task: AzurePowerShell@5
+  name: UnitTestApprovalWorkflow
+  displayName: Unit Test Approval Workflow
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    ScriptType: 'FilePath'
+    ScriptPath: 'tests/workflow/approvalWorkflow.test.ps1'
+    ScriptArguments: '"$(ciamResourceGroupName)" ApprovalWorkflow-UnitTest "$(Agent.Name)" "$(Build.DefinitionName)"'
+    FailOnStandardError: true
+    azurePowerShellVersion: 'LatestVersion'
+
+- bash: |
+    if [[ `git status --porcelain` ]]; then
+      git config --global user.email 'devops@build.pipeline'
+      git config --global user.name 'DevOps Pipeline'
+      git add --all
+      git commit -m 'DevOps Pipeline [skip ci]'
+      git push origin HEAD:$(Build.SourceBranchName)
+    fi
+  name: CommitChanges
+  displayName: Commit Changes
+
+- task: AzureCLI@2
+  name: UnitTestCleanup
+  displayName: Unit Test Cleanup
+  inputs:
+    azureSubscription: $(ciamServiceConnection)
+    scriptType: bash
+    scriptLocation: inlineScript
+    failOnStandardError: true
+    inlineScript: |
+      st=$(echo $(ciamResourceGroupName) | sed 's/RG/st/; s/[^-]*$/storage/; s/-/1/g; s/.*/\L&/')
+      az storage directory list --account-name $st -s "logic-app-standard" -n "site/wwwroot" --only-show-errors |
+        jq -rc '.[].name | select(endswith("-UnitTest"))' |
+          while IFS=$ read -r name; do
+            az storage file delete --account-name $st -s "logic-app-standard" -p "site/wwwroot/$name/workflow.json" --only-show-errors
+            az storage directory delete --account-name $st -s "logic-app-standard" -n "site/wwwroot/$name" --only-show-errors
+          done
+
+- task: PublishTestResults@2
+  name: PublishTestResults
+  displayName: Publish Test Results
+  inputs:
+    testResultsFormat: 'JUnit'
+    testResultsFiles: 'reports/*.results.xml'
+    failTaskOnFailedTests: true
+    failTaskOnFailureToPublishResults: true
+    failTaskOnMissingResultsFile: true
+
+- task: UseDotNet@2
+  displayName: 'Use .NET Core sdk 7.0.x'
+  inputs:
+    version: 7.0.x
+    
+- task: PublishCodeCoverageResults@2
+  name: PublishCodeCoverageResults
+  displayName: Publish Code Coverage Results
+  inputs:
+    summaryFileLocation: 'reports/*.coverage.xml'
+    failIfCoverageEmpty: true
+
+- bash: |
+    echo 'Expects 100% coverage'
+    echo ''
+    for file in reports/*.coverage.xml; do
+      echo "$file"
+      cat "$file"
+      [[ ! "$(cat "$file")" =~ 'line-rate="1"' ]] && exit 1
+      [[ ! "$(cat "$file")" =~ 'branch-rate="1"' ]] && exit 1
+    done
+  name: CheckTestCoverage
+  displayName: Check Test Coverage
