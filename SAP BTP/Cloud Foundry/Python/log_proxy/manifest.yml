@@ -1,0 +1,9 @@
+---
+applications:
+  - name: log_proxy
+    random-route: true
+    path: ./
+    memory: 128M
+    command: python server.py
+    buildpacks:
+      - python_buildpack
