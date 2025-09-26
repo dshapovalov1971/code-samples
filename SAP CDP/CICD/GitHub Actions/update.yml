@@ -1,0 +1,660 @@
+name: Update Configuration
+
+on:
+  push:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    environment: ${{ github.REF_NAME }}
+    steps:
+      - uses: actions/checkout@main
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Get CDP access token
+        run: |
+          echo "CDP_ACCESS_TOKEN=$(curl -s --fail-with-body \
+            -d grant_type=client_credentials \
+            --data-urlencode client_id=${{ vars.CDP_CLIENT_ID }} \
+            --data-urlencode client_secret=${{ secrets.CDP_CLIENT_SECRET }} \
+            https://oauth2.us1.gigya.com/oauth2/token | jq -rc '.access_token')" >> $GITHUB_ENV
+      - name: Get Business Unit
+        run: |
+          CDP_BU=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits |
+            jq '.[] | select(.name == '"$(jq -nc --slurpfile r replacements '$r | map(select(.e == "${{ github.REF_NAME }}" and .n == "business-unit"))[0].r')"')')
+          CDP_BU_ID=$(echo $CDP_BU | jq -r '.id')
+          CDP_BU_WSID=$(echo $CDP_BU | jq -r '.workspaceId')
+          cp replacements replacements.bak
+          echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"business-unit-id\",\"r\":\"$CDP_BU_ID\"}" >> replacements
+          echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"workspace-id\",\"r\":\"$CDP_BU_WSID\"}" >> replacements
+          echo "CDP_BU_ID=$CDP_BU_ID" >> $GITHUB_ENV
+          echo "CDP_BU_WSID=$CDP_BU_WSID" >> $GITHUB_ENV
+      - name: Get View ID
+        run: |
+          CDP_VIEW_ID=$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/v2/businessunits/${{ env.CDP_BU_ID }}/views |
+            jq -r '.[] | select(.name == "Unified Customer Profile").id')
+          echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"view-id\",\"r\":\"$CDP_VIEW_ID\"}" >> replacements
+          echo "CDP_VIEW_ID=$CDP_VIEW_ID" >> $GITHUB_ENV
+      - name: Write Customer Schemas
+        run: |
+          trap 'cat resp' EXIT
+          customerSchemas="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/customerschemas |
+            jq 'map({name, id})')"
+          jq -rc '.[] | ., .name, .schemaType' cdp/schemas.json |
+            while IFS=$ read -r json; read -r name; read -r schemaType; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              customerSchemaId="$(echo "$customerSchemas" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              mutableSchemaTypes=(0 1 5 6)
+              if [ ! $customerSchemaId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc 'del(.id, .isMutable)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/customerschemas
+                customerSchemaId=$(cat resp | jq -rc '.id')
+              elif [[ " ${mutableSchemaTypes[@]} " =~ " ${schemaType} " ]]; then
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $customerSchemaId '.id |= $id | del(.isMutable)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/"$(echo $json | jq -rc 'if .schemaType == 6 then "schemas/" + .childSchemaId + "/relationships" else "customerschemas" end')"/$customerSchemaId
+              fi
+              echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-schema-id\",\"r\":\"$customerSchemaId\"}" >> replacements  
+            done
+          echo "" > resp
+      - name: Write Indicators
+        run: |
+          trap 'cat resp' EXIT
+          actIndicators="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/activityIndicators |
+            jq 'map({name, id})')"
+          jq -rc '.[] | select(.isProtected | not) | ., .name' cdp/activity-indicators.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              actIndicatorId="$(echo "$actIndicators" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $actIndicatorId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc 'del(.id)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/activityIndicators
+                actIndicatorId=$(cat resp | jq -rc '.id')
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $actIndicatorId '.id |= $id')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/activityIndicators/$actIndicatorId               
+              fi
+              echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-activity-indicator-id\",\"r\":\"$actIndicatorId\"}" >> replacements  
+            done
+          indSchemaId="$(jq -rnc --slurpfile r replacements '$r | map(select(.e == "${{ github.REF_NAME }}" and .n == "Profile-schema-id"))[0].r')"
+          calcIndicators="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/calculatedIndicators?schemaId="$indSchemaId" |
+            jq 'map({name, id})')"
+          jq -rc '.[] | select(.isProtected | not) | ., .name' cdp/calculated-indicators-Profile.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              calcIndicatorId="$(echo "$calcIndicators" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $calcIndicatorId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg schemaId "$indSchemaId" 'del(.id) | .schemaId |= $schemaId')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/calculatedIndicators
+                calcIndicatorId=$(cat resp | jq -rc '.id')
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $calcIndicatorId '.id |= $id')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/calculatedIndicators/$calcIndicatorId               
+              fi
+              echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-calculated-indicator-id\",\"r\":\"$calcIndicatorId\"}" >> replacements  
+            done
+          echo "" > resp
+      - name: Write Business Purposes
+        run: |
+          trap 'cat resp' EXIT
+          purposes="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/purposes |
+            jq 'map({externalId, id})')"
+          jq -rc '.[] | ., .externalId' cdp/purposes.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              purposeId="$(echo "$purposes" | jq -rc --arg name "$name" 'map(select(.externalId == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $purposeId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc 'del(.id)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/purposes
+                purposeId=$(cat resp | jq -rc '.id')
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $purposeId '.id |= $id')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/purposes/$purposeId               
+              fi
+              echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-purpose-id\",\"r\":\"$purposeId\"}" >> replacements  
+            done
+          echo "" > resp
+      - name: Write Match and Merge Rules
+        run: |
+          matchRules="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/matchRules |
+            jq 'map({name, id})')"
+          jq -rc '.[] | ., .name, .isProtected' cdp/match-rules-Profile.json |
+            while IFS=$ read -r json; read -r name; read -r protected; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              matchRuleId="$(echo "$matchRules" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ $protected == false ]; then
+                if [ ! $matchRuleId ]; then
+                  matchRuleId="$(curl -s --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -d "$(echo $json | jq -rc 'del(.id)')" \
+                      https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/matchRules | jq -rc '.id')"
+                else
+                  curl -sX PUT --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -d "$(echo $json | jq -rc --arg id $matchRuleId '.id |= $id')" \
+                      https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/matchRules/$matchRuleId             
+                fi
+              fi
+              echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"Profile-$name-match-rule-id\",\"r\":\"$matchRuleId\"}" >> replacements  
+            done
+            curl -s --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d @cdp/merge-rules-Profile.json \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/mergeRules
+            curl -s --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              -H "Content-Type: application/json" \
+              -d "$(jq -rc '.' cdp/match-rules-priority-Profile.json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/matchRulesPriority
+          jq -rc '.[] | select(.schemaType == 5) | .id, .name' cdp/schemas.json |
+            sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')" | while IFS=$ read -r id; read -r schema; do
+              matchRules="$(curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/schemas/$id/matchRules |
+                jq 'map({name, id})')"
+              jq -rc '.[] | ., .name, .isProtected' cdp/match-rules-$schema.json |
+                while IFS=$ read -r json; read -r name; read -r protected; do
+                  json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+                  matchRuleId="$(echo "$matchRules" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+                  if [ $protected == false ]; then
+                    if [ ! $matchRuleId ]; then
+                      matchRuleId="$(curl -s --fail-with-body \
+                          -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                          -H "Content-Type: application/json" \
+                          -d "$(echo $json | jq -rc 'del(.id)')" \
+                          https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/schemas/$id/matchRules | jq -rc '.id')"
+                    else
+                      curl -sX PUT --fail-with-body \
+                          -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                          -H "Content-Type: application/json" \
+                          -d "$(echo $json | jq -rc --arg id $matchRuleId '.id |= $id')" \
+                          https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/schemas/$id/matchRules/$matchRuleId           
+                    fi
+                  fi
+                  echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$schema-$name-match-rule-id\",\"r\":\"$matchRuleId\"}" >> replacements  
+                done
+              curl -s --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  -d @"cdp/merge-rules-$schema.json" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/schemas/$id/mergeRules
+              curl -s --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  -d "$(jq -rc '.' cdp/match-rules-priority-$schema.json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/schemas/$id/matchRulesPriority
+            done
+      - name: Write Workspace Connectors  
+        run: |
+          connectors="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/workspaces/${{ env.CDP_BU_WSID }}/applibrary |
+            jq 'map(select(.tenantId != "global")) | map({id, name})')"
+          jq -rc '.[] | select(.tenantId != "global") | .id, .name' cdp/connectors/connectors.json |
+            while IFS=$ read -r id; read -r name; do
+              if [[ -s "cdp/connectors/$name/connector.json" ]]; then
+                json="$(jq -rc '.' "cdp/connectors/$name/connector.json" | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+                connectorId="$(echo "$connectors" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+                if [ ! $connectorId ]; then
+                  echo "Creating $name"
+                  connectorId="$(curl -s --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -d @<(echo "$json") \
+                      https://cdp.eu5-prod.gigya.com/api/workspaces/${{ env.CDP_BU_WSID }}/applibrary | jq -rc '.id')"
+                elif [ "$json" != "$(curl -Gs --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      https://cdp.eu5-prod.gigya.com/api/workspaces/${{ env.CDP_BU_WSID }}/applibrary/$id |
+                    jq -rc 'del(.connectorVersion, .updated, .created, .tenantId, .workspaceId, .id) | .preDefinedEvents |= map(del(.id)) | .preDefinedActions |= map(del(.id))')" ]; then
+                  echo "Updating $name"
+                  curl -sX PUT --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -d @<(echo "$json" | jq -rc --arg id $connectorId '. += {id: $id}') \
+                      https://cdp.eu5-prod.gigya.com/api/workspaces/${{ env.CDP_BU_WSID }}/applibrary/$connectorId
+                fi
+                echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-connector-id\",\"r\":\"$connectorId\"}" >> replacements  
+                connUpdated="$(curl -Gs --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      https://cdp.eu5-prod.gigya.com/api/workspaces/${{ env.CDP_BU_WSID }}/applibrary/$connectorId | jq -rc '.updated')"
+                curl -Gs --fail-with-body \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications?state=All |
+                      jq -r --arg connectorId "$connectorId" '.[] | select(.originConnectorId == $connectorId) | .created, .id, .name' |
+                        while IFS=$ read -r acreated; read -r aid; read -r aname; do
+                          if [[ "$connUpdated" > "$acreated" ]]; then
+                            echo "Deleting application $aname"
+                            curl -sX DELETE --fail-with-body \
+                                -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                                https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$aid
+                          fi
+                        done
+              fi
+            done
+      - name: Write Applications
+        run: |
+          ########## Read auth variables ##########
+          CPI_OAUTH=$(echo '${{ secrets.CPI_OAUTH }}' | jq -rc '.oauth | {client_id: .clientid, client_secret: .clientsecret, tokenUrl: .tokenurl, refreshUrl: .tokenurl}')
+          CDC_AUTH="$(jq -nrc '{apiKey: "'"${{ vars.CDC_AUTH_API_KEY }}"'", userKey: "'"${{ vars.CDC_AUTH_USER_KEY }}"'", secret: "'"${{ secrets.CDC_AUTH_SECRET }}"'"}')"
+          EMARSYS_AUTH="$(jq -nrc '{accessToken: "'"${{ secrets.EMARSYS_AUTH_TOKEN }}"'", username: "'"${{ vars.EMARSYS_AUTH_USER }}"'", secret: "'"${{ secrets.EMARSYS_AUTH_SECRET }}"'"}')"
+          C4C_AUTH="$(jq -nrc '{username: "'"${{ vars.C4C_AUTH_USERNAME }}"'", password: "'"${{ secrets.C4C_AUTH_PASSWORD }}"'"}')"
+          ZINFI_AUTH="$(jq -nrc '{client_id: "'"${{ vars.ZINFI_AUTH_CLIENT_ID }}"'", client_secret: "'"${{ secrets.ZINFI_AUTH_CLIENT_SECRET }}"'", tokenUrl: "'"${{ vars.ZINFI_AUTH_TOKEN_URL }}"'", refreshUrl: "'"${{ vars.ZINFI_AUTH_TOKEN_URL }}"'", username: "'"${{ vars.ZINFI_AUTH_USERNAME }}"'", password: "'"${{ secrets.ZINFI_AUTH_PASSWORD }}"'", scope: "'"${{ vars.ZINFI_AUTH_SCOPE }}"'"}')"
+          #########################################
+
+          junkEvents='[
+            "Commerce Cloud - Get cart in real time",
+            "Commerce Cloud - Get orders in real time",
+            "Customer Data Cloud - Get account locked out activity",
+            "Customer Data Cloud - Get account registered activity",
+            "Customer Data Cloud - Get account logged in activity",
+            "Customer Data Cloud - Get consent updated activity",
+            "Customer Data Cloud - Get subscription updated activity",
+            "Customer Data Cloud - Get full accounts in batch - Scheduled ingestion",
+            "Customer Data Cloud - Get groups in batch",
+            "Customer Data Cloud - Get group relationships in batch",
+            "Emarsys - Get mobile in-app notification clicked activity",
+            "Emarsys - Get mobile push notification opened activity",
+            "S4 HANA - Get Business Partner Organization in real time",
+            "S4 HANA - Get Business Partner Person and Organization relationship in real time",
+            "S4 HANA - Get Business Partner Person in real time",
+            "S4 HANA - Get deliveries in real time",
+            "S4 HANA - Get invoices in real time",
+            "Zinfi - Read List of Records"
+          ]'
+          junkActions='[
+            "Emarsys - Create or update an account and relationship - Automatic activation",
+            "Emarsys - Create or update a contact",
+            "Emarsys - Create or replace a contact list",
+            "Emarsys - Trigger an external event",
+            "S4 HANA - Business Partner Update"
+          ]'
+
+          trap 'cat resp' EXIT
+
+          applications="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications?state=All |
+            jq 'map({name: (.name | sub("/"; "")), id})')"
+          jq -rc '.[] | .id, .name, .originConnectorId' cdp/applications/applications.json |
+            while IFS=$ read -r id; read -r name; read -r originConnectorId; do
+              name=${name//\//}
+              connName="$(echo "$originConnectorId" | sed -e 's/{{//;s/-connector-id}}//')"
+              json="$(jq -rc '.' "cdp/applications/$name/application.json" | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              applicationId="$(echo "$applications" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $applicationId ]; then
+                echo "Creating $name"
+                payload="$([ "$(echo $json | jq -rc '.type')" == "WebClient" ] \
+                  && echo $json | jq -rc '{configValues, trustedDomains, state: "All", name, enabled, inboundNullHandling, type, category, logoUrl}' \
+                  || echo $json | jq -rc --slurpfile resources <(curl -Gs --fail-with-body \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        https://cdp.eu5-prod.gigya.com/api/workspaces/${{ env.CDP_BU_WSID }}/applibrary/$(jq -rc --arg name "$connName" 'map(select(.name == $name))[0].id' cdp/connectors/connectors.json)) \
+                      '{configValues, connectorId: $resources[0].id, enabled, inboundNullHandling, logoUrl, name, resources: $resources[0].resources, category, state: "All"}')"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d @<(echo "$payload") \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications
+                applicationId=$(cat resp | jq -rc '.id')
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d @<(echo $json | jq -rc --arg id $applicationId '.id |= $id | . += {state: "All"}') \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId
+              fi
+
+              jq -rc '.preDefinedActions, .preDefinedEvents, .preDefinedEventListeners' resp |
+                while IFS=$ read -r preDefinedActions; read -r preDefinedEvents; read -r preDefinedEventListeners; do
+                  if [[ "$preDefinedActions" != null ]]; then
+                    echo "$preDefinedActions" | jq -rc 'to_entries[].value | .name, .id' |
+                      while IFS=$ read -r aname; read -r aid; do
+                        echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$connName-$aname-predefined-action-id\",\"r\":\"$aid\"}" >> replacements
+                      done
+                  fi
+                  if [[ "$preDefinedEvents" != null ]]; then
+                    echo "$preDefinedEvents" | jq -rc 'to_entries[].value | .name, .id' |
+                      while IFS=$ read -r ename; read -r eid; do
+                        echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$connName-$ename-predefined-event-id\",\"r\":\"$eid\"}" >> replacements
+                      done
+                  fi
+                  if [[ "$preDefinedEventListeners" != null ]]; then
+                    echo "$preDefinedEventListeners" | jq -rc 'to_entries[].value | .name, .id' |
+                      while IFS=$ read -r ename; read -r eid; do
+                        echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$connName-$ename-predefined-event-listener-id\",\"r\":\"$eid\"}" >> replacements
+                      done
+                  fi
+                done
+
+              curl -s --fail-with-body -o resp \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  -d "@cdp/applications/$name/priority.json" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/priority
+              auth="$(echo '${{ vars.APP_AUTH_CONFIG }}' | jq -rc '."'"$name"'"')"
+              if [[ "$auth" != null  ]]; then
+                curl -sX PUT "$([[ "$auth" != EMARSYS_AUTH ]] && echo '--fail-with-body')" \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(jq -r '. += {parameters: '"${!auth}"'}' "cdp/applications/$name/auth.json")" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/auth
+              fi
+              echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-application-id\",\"r\":\"$applicationId\"}" >> replacements  
+
+              events="$(curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents |
+                jq 'map({name, id})')"
+              echo "$events" | jq -rc '.[] | .id, .name' | 
+                while IFS=$ read -r eid; read -r event; do
+                  if [[ "$(echo "$junkEvents" | jq 'index("'"$name"'" + " - " + "'"$event"'")')" != null ]]; then
+                    curl -sX DELETE --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents/$eid
+                  fi
+                done
+              jq -rc '.[] | .id, .name' "cdp/applications/$name/events/events.json" |
+                while IFS=$ read -r eid; read -r event; do
+                  if [[ -s "cdp/applications/$name/events/$event/event.json" ]]; then
+                    echo "cdp/applications/$name/events/$event/event.json"
+                    json="$(jq -rc '.' "cdp/applications/$name/events/$event/event.json" | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+                    eventId="$(echo "$events" | jq -rc --arg name "$event" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+                    if [ ! $eventId ]; then
+                      curl -s --fail-with-body -o resp \
+                          -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                          -H "Content-Type: application/json" \
+                          -d @<(echo $json | jq -rc 'del(.id, .schemaId, .contextId) | .schema |= tostring') \
+                          https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents
+                      eventId=$(cat resp | jq -rc '.id')
+                    fi
+                    curl -sX PUT --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d @<(echo $json | jq -rc --arg id $eventId '.id |= $id | .schemaId |= $id | .contextId |= $id | .schema |= tostring') \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents/$eventId
+                    echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-$event-dataevent-id\",\"r\":\"$eventId\"}" >> replacements
+                  fi
+                  if [[ -s "cdp/applications/$name/events/$event/mappings.json" && "$(cat "cdp/applications/$name/events/$event/mappings.json")" != "[]" ]]; then
+                    echo "cdp/applications/$name/events/$event/mappings.json"
+                    curl -s --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -H "X-Version: 2.0.0" \
+                        -d "$(cat "cdp/applications/$name/events/$event/mappings.json" |
+                          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents/$eventId/mappings
+                  fi
+                  if [[ -s "cdp/applications/$name/events/$event/schedules.json" ]]; then
+                    echo "cdp/applications/$name/events/$event/schedules.json"
+                    curl -s --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d "$(cat "cdp/applications/$name/events/$event/schedules.json" |
+                          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents/$eventId/schedules
+                  fi
+                  if [[ -s "cdp/applications/$name/events/$event/extensions.json" ]]; then
+                    echo "cdp/applications/$name/events/$event/extensions.json"
+                    curl -s --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d @<(jq '{extensions: .}' "cdp/applications/$name/events/$event/extensions.json" |
+                          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')") \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/dataevents/$eventId/extensions
+                  fi
+                done
+
+              actions="$(curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions |
+                jq 'map({name, id})')"
+              echo "$actions" | jq -rc '.[] | .id, .name' | 
+                while IFS=$ read -r aid; read -r action; do
+                  if [[ "$(echo "$junkActions" | jq 'index("'"$name"'" + " - " + "'"$action"'")')" != null ]]; then
+                    curl -sX DELETE --fail-with-body \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions/$aid
+                  fi
+                done
+              jq -rc '.[] | .id, .name' "cdp/applications/$name/actions/actions.json" |
+                while IFS=$ read -r aid; read -r action; do
+                  echo "cdp/applications/$name/actions/$action/action.json"
+                  json="$(jq -rc '.' "cdp/applications/$name/actions/$action/action.json" | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+                  actionId="$(echo "$actions" | jq -rc --arg name "$action" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+                  if [ ! $actionId ]; then
+                    curl -s --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d @<(echo $json | jq -rc 'del(.id, .schemaId, .contextId)') \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions
+                    actionId=$(cat resp | jq -rc '.id')
+                  else
+                    curl -sX PUT --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d @<(echo $json | jq -rc --arg id $actionId '.id |= $id | .schemaId |= $id | .contextId |= $id | .enabled |= false') \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions/$actionId
+                  fi
+                  echo "{\"e\":\"${{ github.REF_NAME }}\",\"n\":\"$name-$action-action-id\",\"r\":\"$actionId\"}" >> replacements  
+                  echo "cdp/applications/$name/actions/$action/schema.json"
+                  curl -s --fail-with-body -o resp \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -d "$(cat "cdp/applications/$name/actions/$action/schema.json" |
+                        sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+                      https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions/$actionId/schema
+                  if [[ -s "cdp/applications/$name/actions/$action/mappings.json" && "$(cat "cdp/applications/$name/actions/$action/mappings.json")" != "[]" ]]; then
+                    echo "cdp/applications/$name/actions/$action/mappings.json"
+                    curl -s --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -H "X-Version: 2.0.0" \
+                        -d @<(cat "cdp/applications/$name/actions/$action/mappings.json" |
+                          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')") \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions/$actionId/mappings
+                  fi
+                  curl -sX PUT --fail-with-body -o resp \
+                      -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                      -H "Content-Type: application/json" \
+                      -d @<(echo $json | jq -rc --arg id $actionId '.id |= $id | .schemaId |= $id | .contextId |= $id') \
+                      https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/applications/$applicationId/actions/$actionId
+                done
+            done
+          echo "" > resp
+      - name: Reapply Business Purposes
+        run: |
+          purposes="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/purposes |
+            jq 'map({externalId, id})')"
+          jq -rc '.[] | ., .externalId' cdp/purposes.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              purposeId="$(echo "$purposes" | jq -rc --arg name "$name" 'map(select(.externalId == $name))[0].id')"
+              curl -sX PUT --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  -H "Content-Type: application/json" \
+                  -d "$(echo $json | jq -rc --arg id $purposeId '.id |= $id')" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/purposes/$purposeId > /dev/null                 
+            done
+      - name: Delete Junk
+        run: |
+          junkSchemas='[
+            "Account Created",
+            "Account Locked-out",
+            "Account Login",
+            "Consent Updated",
+            "EmailCampaign",
+            "MobileCampaign",
+            "Subscription Updated"
+          ]'          
+
+          curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/customerschemas |
+            jq -rc '.[] | .id, .name' |
+              while IFS=$ read -r id; read -r name; do
+                if [[ "$(echo "$junkSchemas" | jq 'index("'"$name"'")')" != null ]]; then
+                  curl -sX DELETE --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/customerschemas/$id
+                fi
+              done
+      - name: Write Explorations
+        run: |
+          trap 'cat resp' EXIT
+          explorations="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/exploration |
+            jq 'map({name, id})')"
+          jq -rc '.[] | ., .name' cdp/explorations.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              explorationId="$(echo "$explorations" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $explorationId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc 'del(.id)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/exploration
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $explorationId '.id |= $id')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/exploration/$explorationId
+              fi
+            done
+          echo "" > resp
+      - name: Write Audiences
+        run: |
+          trap 'cat resp' EXIT
+          audiences="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/audiences |
+            jq 'map({name, id})')"
+          jq -rc '.[] | ., .name' cdp/audiences/audiences.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              audienceId="$(echo "$audiences" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $audienceId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc 'del(.id)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/audiences
+                audienceId=$(cat resp | jq -rc '.id')
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $audienceId '.id |= $id')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/audiences/$audienceId
+              fi
+              echo "cdp/audiences/$name/schedules.json"
+              scheduleId="$(curl -Gs --fail-with-body \
+                  -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                  https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/audiences/$audienceId/schedules?type=periodic |
+                jq -rc '.[0].id')"
+              jq -rc '.[] | .startingTime |= (now + 3600 | todate) | .actions |= map(del(.dataFlowId))' "cdp/audiences/$name/schedules.json" |
+                while IFS=$ read -r json; do
+                  if [[ $scheduleId == null ]]; then
+                    echo Creating schedule
+                    curl -s --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d "$(echo $json |
+                          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/audiences/$audienceId/schedules?type=periodic
+                  else
+                    echo Updating schedule
+                    curl -sX PUT --fail-with-body -o resp \
+                        -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                        -H "Content-Type: application/json" \
+                        -d "$(echo $json |
+                          sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")" \
+                        https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/audiences/$audienceId/schedules/$scheduleId
+                  fi
+                done
+            done
+          echo "" > resp
+      - name: Write CX Flows
+        run: |
+          trap 'cat resp' EXIT
+          journeys="$(curl -Gs --fail-with-body \
+              -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+              https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/journeys |
+            jq 'map({name, id})')"
+          jq -rc '.[] | ., .name' cdp/journeys.json |
+            while IFS=$ read -r json; read -r name; do
+              json="$(echo $json | sed -e "$(jq -nrc --slurpfile r replacements '$r | map(select(.e=="${{ github.REF_NAME }}") | "s/{{"+(.n | gsub("[[]";"\\[") | gsub("[]]";"\\]") | gsub("/";"\\/"))+"}}/"+.r+"/g") | join(";")')")"
+              journeyId="$(echo "$journeys" | jq -rc --arg name "$name" 'map(select(.name == $name)) | if length > 0 then .[0].id else "" end')"
+              if [ ! $journeyId ]; then
+                echo "Creating $name"
+                curl -s --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc 'del(.id)')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/journeys
+              else
+                echo "Updating $name"
+                curl -sX PUT --fail-with-body -o resp \
+                    -H "Authorization: Bearer ${{ env.CDP_ACCESS_TOKEN }}" \
+                    -H "Content-Type: application/json" \
+                    -d "$(echo $json | jq -rc --arg id $journeyId '.id |= $id')" \
+                    https://cdp.eu5-prod.gigya.com/api/businessunits/${{ env.CDP_BU_ID }}/views/${{ env.CDP_VIEW_ID }}/journeys/$journeyId
+              fi
+            done
+          echo "" > resp
