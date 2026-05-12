@@ -72,12 +72,9 @@ pm.sendRequest(FORGE_URL, (err, response) => {
   });
 
   Object.entries({
-    'AS2-Version': '1.0',
     'AS2-From': requiredVariable('as2_from'),
     'AS2-To': requiredVariable('as2_to'),
-    'MIME-Version': '1.0',
     'Message-ID': '<' + randomHex(4) + '-' + randomHex(2) + '-' + randomHex(2) + '-' + randomHex(2) + '-' + randomHex(6) + '@' + MESSAGE_ID_DOMAIN + '>',
-    Date: new Date().toUTCString(),
     'Content-Type': 'multipart/signed; protocol="application/pkcs7-signature"; micalg=' + SIGNING_ALGORITHM + '; boundary="' + boundary + '"'
   }).forEach(header => pm.request.headers.upsert({key: header[0], value: header[1]}));
 });
