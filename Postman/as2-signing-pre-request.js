@@ -45,7 +45,7 @@ pm.sendRequest(FORGE_URL, (err, response) => {
   p7.addSigner({
     key: id.key,
     certificate: id.certificate,
-    digestAlgorithm: forge.pki.oids.sha256,
+    digestAlgorithm: forge.pki.oids[SIGNING_ALGORITHM.replace('-', '')],
     authenticatedAttributes: [
       {type: forge.pki.oids.contentType, value: forge.pki.oids.data},
       {type: forge.pki.oids.messageDigest},
